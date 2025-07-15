@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Web Workers 测试</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .test-section {
+            margin: 20px 0;
+            padding: 15px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+        }
+        .test-result {
+            margin: 10px 0;
+            padding: 10px;
+            border-radius: 3px;
+        }
+        .success {
+            background-color: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        .error {
+            background-color: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        .info {
+            background-color: #d1ecf1;
+            color: #0c5460;
+            border: 1px solid #bee5eb;
+        }
+        button {
+            background-color: #007bff;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        button:disabled {
+            background-color: #6c757d;
+            cursor: not-allowed;
+        }
+        canvas {
+            border: 1px solid #ccc;
+            margin: 10px 0;
+        }
+        .performance-info {
+            font-family: monospace;
+            font-size: 12px;
+            background-color: #f8f9fa;
+            padding: 10px;
+            border-radius: 3px;
+            margin: 10px 0;
+        }
+    </style>
+</head>
+<body>
+    <h1>Web Workers 性能测试</h1>
+    
+    <div class="test-section">
+        <h2>Worker 初始化测试</h2>
+        <button id="initWorkers">初始化 Workers</button>
+        <button id="destroyWorkers" disabled>销毁 Workers</button>
+        <div id="initResult" class="test-result"></div>
+    </div>
+
+    <div class="test-section">
+        <h2>填充算法测试</h2>
+        <canvas id="testCanvas" width="400" height="300"></canvas>
+        <br>
+        <button id="createTestPattern">创建测试图案</button>
+        <button id="testFloodFill" disabled>测试洪水填充</button>
+        <button id="testBucketFill" disabled>测试桶填充</button>
+        <div id="fillResult" class="test-result"></div>
+        <div id="fillPerformance" class="performance-info"></div>
+    </div>
+
+    <div class="test-section">
+        <h2>颜色处理测试</h2>
+        <button id="testColorConversion">测试颜色转换</button>
+        <button id="testColorBlending">测试颜色混合</button>
+        <button id="testColorAnalysis">测试颜色分析</button>
+        <div id="colorResult" class="test-result"></div>
+        <div id="colorPerformance" class="performance-info"></div>
+    </div>
+
+    <div class="test-section">
+        <h2>图像处理测试</h2>
+        <button id="testImageResize">测试图像缩放</button>
+        <button id="testImageFilter">测试图像滤镜</button>
+        <button id="testImageTransform">测试图像变换</button>
+        <div id="imageResult" class="test-result"></div>
+        <div id="imagePerformance" class="performance-info"></div>
+    </div>
+
+    <div class="test-section">
+        <h2>几何计算测试</h2>
+        <button id="testGeometryCalc">测试几何计算</button>
+        <button id="testPathOptimization">测试路径优化</button>
+        <div id="geometryResult" class="test-result"></div>
+        <div id="geometryPerformance" class="performance-info"></div>
+    </div>
+
+    <div class="test-section">
+        <h2>性能监控</h2>
+        <button id="getPerformanceStats">获取性能统计</button>
+        <button id="getWorkerStatus">获取 Worker 状态</button>
+        <div id="performanceResult" class="test-result"></div>
+    </div>
+
+    <script type="module">
+        // 注意：这个测试页面需要在支持ES模块的环境中运行
+        // 在实际项目中，Worker 文件路径需要根据实际部署情况调整
+        
+        let workerService = null;
+        
+        // 显示结果的辅助函数
+        function showResult(elementId, message, type = 'info') {
+            const element = document.getElementById(elementId);
+            element.className = `test-result ${type}`;
+            element.innerHTML = message;
+        }
+        
+        // 显示性能信息的辅助函数
+        function showPerformance(elementId, data) {
+            const element = document.getElementById(elementId);
+            element.innerHTML = `<pre>${JSON.stringify(data, null, 2)}</pre>`;
+        }
+        
+        // 初始化 Workers
+        document.getElementById('initWorkers').addEventListener('click', async () => {
+            try {
+                // 动态导入 WorkerService
+                const { WorkerService } = await import('../workers/index.js');
+                workerService = new WorkerService();
+                
+                showResult('initResult', 'Workers 初始化成功！', 'success');
+                document.getElementById('initWorkers').disabled = true;
+                document.getElementById('destroyWorkers').disabled = false;
+                document.getElementById('testFloodFill').disabled = false;
+                document.getElementById('testBucketFill').disabled = false;
+            } catch (error) {
+                showResult('initResult', `Workers 初始化失败: ${error.message}`, 'error');
+                console.error('Worker initialization error:', error);
+            }
+        });
+        
+        // 销毁 Workers
+        document.getElementById('destroyWorkers').addEventListener('click', () => {
+            if (workerService) {
+                workerService.destroy();
+                workerService = null;
+                showResult('initResult', 'Workers 已销毁', 'info');
+                document.getElementById('initWorkers').disabled = false;
+                document.getElementById('destroyWorkers').disabled = true;
+                document.getElementById('testFloodFill').disabled = true;
+                document.getElementById('testBucketFill').disabled = true;
+            }
+        });
+        
+        // 创建测试图案
+        document.getElementById('createTestPattern').addEventListener('click', () => {
+            const canvas = document.getElementById('testCanvas');
+            const ctx = canvas.getContext('2d');
+            
+            // 清空画布
+            ctx.fillStyle = 'white';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // 创建一些彩色区域
+            ctx.fillStyle = 'red';
+            ctx.fillRect(50, 50, 100, 100);
+            
+            ctx.fillStyle = 'blue';
+            ctx.fillRect(200, 50, 100, 100);
+            
+            ctx.fillStyle = 'green';
+            ctx.fillRect(125, 150, 150, 100);
+            
+            showResult('fillResult', '测试图案已创建', 'success');
+        });
+        
+        // 测试洪水填充
+        document.getElementById('testFloodFill').addEventListener('click', async () => {
+            if (!workerService) {
+                showResult('fillResult', '请先初始化 Workers', 'error');
+                return;
+            }
+            
+            const canvas = document.getElementById('testCanvas');
+            const ctx = canvas.getContext('2d');
+            const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+            
+            const startTime = performance.now();
+            
+            try {
+                const result = await workerService.floodFill({
+                    imageData: imageData.data,
+                    width: canvas.width,
+                    height: canvas.height,
+                    startX: 75,
+                    startY: 75,
+                    fillColor: { r: 255, g: 255, b: 0, a: 255 }, // 黄色
+                    cellWidth: 10,
+                    cellHeight: 10,
+                    tolerance: 0
+                });
+                
+                const endTime = performance.now();
+                
+                if (result.success && result.modifiedImageData) {
+                    const newImageData = new ImageData(
+                        new Uint8ClampedArray(result.modifiedImageData),
+                        canvas.width,
+                        canvas.height
+                    );
+                    ctx.putImageData(newImageData, 0, 0);
+                    
+                    showResult('fillResult', `洪水填充成功！填充了 ${result.filledCells} 个格子`, 'success');
+                    showPerformance('fillPerformance', {
+                        operation: 'floodFill',
+                        duration: `${(endTime - startTime).toFixed(2)}ms`,
+                        filledCells: result.filledCells,
+                        imageSize: `${canvas.width}x${canvas.height}`
+                    });
+                } else {
+                    showResult('fillResult', `洪水填充失败: ${result.error}`, 'error');
+                }
+            } catch (error) {
+                showResult('fillResult', `洪水填充错误: ${error.message}`, 'error');
+            }
+        });
+        
+        // 测试颜色转换
+        document.getElementById('testColorConversion').addEventListener('click', async () => {
+            if (!workerService) {
+                showResult('colorResult', '请先初始化 Workers', 'error');
+                return;
+            }
+            
+            const startTime = performance.now();
+            
+            try {
+                const result = await workerService.convertColor({
+                    color: '#FF5733',
+                    fromFormat: 'hex',
+                    toFormat: 'rgba'
+                });
+                
+                const endTime = performance.now();
+                
+                if (result.success) {
+                    showResult('colorResult', `颜色转换成功: ${JSON.stringify(result.convertedColor)}`, 'success');
+                    showPerformance('colorPerformance', {
+                        operation: 'colorConversion',
+                        duration: `${(endTime - startTime).toFixed(2)}ms`,
+                        input: '#FF5733',
+                        output: result.convertedColor
+                    });
+                } else {
+                    showResult('colorResult', `颜色转换失败: ${result.error}`, 'error');
+                }
+            } catch (error) {
+                showResult('colorResult', `颜色转换错误: ${error.message}`, 'error');
+            }
+        });
+        
+        // 获取性能统计
+        document.getElementById('getPerformanceStats').addEventListener('click', async () => {
+            if (!workerService) {
+                showResult('performanceResult', '请先初始化 Workers', 'error');
+                return;
+            }
+            
+            try {
+                const stats = await workerService.getPerformanceStats();
+                showResult('performanceResult', '性能统计获取成功', 'success');
+                showPerformance('performanceResult', stats);
+            } catch (error) {
+                showResult('performanceResult', `获取性能统计失败: ${error.message}`, 'error');
+            }
+        });
+        
+        // 获取 Worker 状态
+        document.getElementById('getWorkerStatus').addEventListener('click', async () => {
+            if (!workerService) {
+                showResult('performanceResult', '请先初始化 Workers', 'error');
+                return;
+            }
+            
+            try {
+                const status = await workerService.getWorkerStatus();
+                showResult('performanceResult', 'Worker 状态获取成功', 'success');
+                showPerformance('performanceResult', status);
+            } catch (error) {
+                showResult('performanceResult', `获取 Worker 状态失败: ${error.message}`, 'error');
+            }
+        });
+        
+        // 页面加载完成后的初始化
+        window.addEventListener('load', () => {
+            showResult('initResult', '页面已加载，点击"初始化 Workers"开始测试', 'info');
+            
+            // 创建初始测试图案
+            document.getElementById('createTestPattern').click();
+        });
+        
+        // 页面卸载时清理资源
+        window.addEventListener('beforeunload', () => {
+            if (workerService) {
+                workerService.destroy();
+            }
+        });
+    </script>
+</body>
+</html>
