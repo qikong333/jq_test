@@ -61,11 +61,36 @@
           >
             画笔工具
           </button>
+          <button
+            @click="setTool('eraser')"
+            :class="['tool-btn', { active: currentTool === 'eraser' }]"
+          >
+            橡皮擦
+          </button>
+          <button
+            @click="setTool('bucket')"
+            :class="['tool-btn', { active: currentTool === 'bucket' }]"
+          >
+            油桶填充
+          </button>
         </div>
 
         <!-- 画笔设置 -->
         <div class="brush-settings" v-if="currentTool === 'brush'">
           <label>画笔颜色:</label>
+          <input type="color" v-model="brushColor" class="color-picker" />
+          <button @click="clearGrid" class="clear-btn">清除格子</button>
+        </div>
+
+        <!-- 橡皮擦设置 -->
+        <div class="eraser-settings" v-if="currentTool === 'eraser'">
+          <label>橡皮擦工具</label>
+          <button @click="clearGrid" class="clear-btn">清除所有</button>
+        </div>
+
+        <!-- 油桶填充设置 -->
+        <div class="bucket-settings" v-if="currentTool === 'bucket'">
+          <label>填充颜色:</label>
           <input type="color" v-model="brushColor" class="color-picker" />
           <button @click="clearGrid" class="clear-btn">清除格子</button>
         </div>
@@ -77,6 +102,12 @@
           </button>
           <button @click="redo" :disabled="!canRedo" class="history-btn" title="重做 (Ctrl+Y)">
             ↷ 重做
+          </button>
+          <button @click="showFullImage" class="preview-btn" title="显示完整画布">
+            🖼️ 显示大图
+          </button>
+          <button @click="showCanvasColors" class="colors-btn" title="获取画布颜色">
+            🎨 获取颜色
           </button>
         </div>
 
@@ -119,8 +150,33 @@
           {{ Math.round(gridCellWidth) }}px × {{ Math.round(gridCellHeight) }}px)
         </span>
         <span class="tool-info">
-          当前工具: {{ currentTool === 'move' ? '移动视窗' : '画笔工具' }}
+          当前工具:
+          {{
+            currentTool === 'move'
+              ? '移动视窗'
+              : currentTool === 'brush'
+                ? '画笔工具'
+                : currentTool === 'eraser'
+                  ? '橡皮擦工具'
+                  : '油桶填充'
+          }}
         </span>
+
+        <!-- 颜色显示面板 -->
+        <div class="colors-panel" v-if="canvasColors.length > 0">
+          <h4>画布颜色 ({{ canvasColors.length }}种)</h4>
+          <div class="colors-grid">
+            <div
+              v-for="(color, index) in canvasColors"
+              :key="color"
+              class="color-item"
+              :style="{ backgroundColor: color }"
+              :title="`${color} (${index + 1}/${canvasColors.length})`"
+            >
+              <span class="color-text">{{ color }}</span>
+            </div>
+          </div>
+        </div>
       </div>
 
       <div class="canvas-wrapper">
@@ -135,12 +191,15 @@
             :class="{
               'brush-cursor': currentTool === 'brush',
               'move-cursor': currentTool === 'move',
+              'eraser-cursor': currentTool === 'eraser',
+              'bucket-cursor': currentTool === 'bucket',
             }"
             @mousedown="startDrawing"
             @mousemove="draw"
             @mouseup="stopDrawing"
             @mouseleave="stopDrawing"
             @wheel="handleWheel"
+            @contextmenu.prevent
           ></canvas>
 
           <!-- 网格画布 -->
@@ -156,6 +215,23 @@
             :height="thumbnailHeight"
             @click="onThumbnailClick"
           ></canvas>
+        </div>
+      </div>
+    </div>
+
+    <!-- 大图预览弹窗 -->
+    <div v-if="showPreviewModal" class="preview-modal" @click="closePreviewModal">
+      <div class="preview-modal-content" @click.stop>
+        <div class="preview-modal-header">
+          <h3>完整画布预览</h3>
+          <button @click="closePreviewModal" class="close-btn">×</button>
+        </div>
+        <div class="preview-modal-body">
+          <canvas ref="previewCanvasRef" class="preview-canvas"></canvas>
+        </div>
+        <div class="preview-modal-footer">
+          <button @click="downloadFullImage" class="download-btn">下载图片</button>
+          <button @click="closePreviewModal" class="cancel-btn">关闭</button>
         </div>
       </div>
     </div>
@@ -187,20 +263,28 @@ const canvasRef = ref<HTMLCanvasElement | null>(null)
 const gridCanvasRef = ref<HTMLCanvasElement | null>(null)
 const thumbnailRef = ref<HTMLCanvasElement | null>(null)
 const fileInputRef = ref<HTMLInputElement | null>(null)
+const previewCanvasRef = ref<HTMLCanvasElement | null>(null)
+
+// 预览弹窗状态
+const showPreviewModal = ref(false)
 
 const isDrawing = ref(false)
 const lastX = ref(0)
 const lastY = ref(0)
 const isDragDrawing = ref(false) // 标记是否在拖拽绘制过程中
+const isRightDragging = ref(false) // 标记是否在右键拖拽移动过程中
 const backgroundImage = ref<HTMLImageElement | null>(null)
 const imageLoaded = ref(false)
 
 // 工具状态
-const currentTool = ref<'move' | 'brush'>('move')
+const currentTool = ref<'move' | 'brush' | 'eraser' | 'bucket'>('brush')
 const brushColor = ref('#ff0000')
 
 // 存储绘制的格子数据
 const drawnCells = ref<Map<string, string>>(new Map())
+
+// 记录上一个绘制的格子位置（用于画笔连贯性）
+const lastDrawnCell = ref<{ col: number; row: number } | null>(null)
 
 // 撤销重做功能
 const history = ref<Map<string, string>[]>([new Map()]) // 历史记录数组
@@ -210,6 +294,9 @@ const maxHistorySize = 50 // 最大历史记录数量
 // 临时网格设置（用于输入框）
 const tempGridCols = ref(949)
 const tempGridRows = ref(1230)
+
+// 画布颜色数组
+const canvasColors = ref<string[]>([])
 
 // 视窗框状态 - 固定在左上角，通过偏移量控制背景移动
 const viewportBox = ref({
@@ -329,7 +416,7 @@ const resetCanvas = () => {
 }
 
 // 设置当前工具
-const setTool = (tool: 'move' | 'brush') => {
+const setTool = (tool: 'move' | 'brush' | 'eraser' | 'bucket') => {
   currentTool.value = tool
 }
 
@@ -700,8 +787,27 @@ const updateThumbnail = () => {
   const thumbnailCtx = thumbnailRef.value.getContext('2d')
   if (!thumbnailCtx) return
 
+  const devicePixelRatio = window.devicePixelRatio || 1
+
+  // 设置缩略图画布的高分辨率
+  const displayWidth = thumbnailWidth.value
+  const displayHeight = thumbnailHeight.value
+  const canvasWidth = displayWidth * devicePixelRatio
+  const canvasHeight = displayHeight * devicePixelRatio
+
+  // 设置实际画布尺寸（高分辨率）
+  thumbnailRef.value.width = canvasWidth
+  thumbnailRef.value.height = canvasHeight
+
+  // 设置显示尺寸
+  thumbnailRef.value.style.width = displayWidth + 'px'
+  thumbnailRef.value.style.height = displayHeight + 'px'
+
+  // 缩放上下文以匹配设备像素比
+  thumbnailCtx.scale(devicePixelRatio, devicePixelRatio)
+
   // 清空缩略图
-  thumbnailCtx.clearRect(0, 0, thumbnailWidth.value, thumbnailHeight.value)
+  thumbnailCtx.clearRect(0, 0, displayWidth, displayHeight)
 
   // 启用图像平滑以获得更好的缩略图效果
   thumbnailCtx.imageSmoothingEnabled = true
@@ -709,16 +815,16 @@ const updateThumbnail = () => {
 
   // 绘制完整的背景图片到缩略图（与主画布相同的拉伸逻辑）
   if (backgroundImage.value && imageLoaded.value) {
-    thumbnailCtx.drawImage(backgroundImage.value, 0, 0, thumbnailWidth.value, thumbnailHeight.value)
+    thumbnailCtx.drawImage(backgroundImage.value, 0, 0, displayWidth, displayHeight)
   } else {
     // 如果没有背景图片，填充白色
     thumbnailCtx.fillStyle = '#ffffff'
-    thumbnailCtx.fillRect(0, 0, thumbnailWidth.value, thumbnailHeight.value)
+    thumbnailCtx.fillRect(0, 0, displayWidth, displayHeight)
   }
 
   // 绘制已填充的格子到缩略图
-  const scaleX = thumbnailWidth.value / calculatedWidth.value
-  const scaleY = thumbnailHeight.value / calculatedHeight.value
+  const scaleX = displayWidth / calculatedWidth.value
+  const scaleY = displayHeight / calculatedHeight.value
   // 使用基础网格尺寸（不受视窗缩放影响）
   const baseCellWidth = calculatedWidth.value / canvasConfig.value.gridCols
   const baseCellHeight = calculatedHeight.value / canvasConfig.value.gridRows
@@ -739,7 +845,7 @@ const updateThumbnail = () => {
   // 添加边框
   thumbnailCtx.strokeStyle = '#333'
   thumbnailCtx.lineWidth = 1
-  thumbnailCtx.strokeRect(0, 0, thumbnailWidth.value, thumbnailHeight.value)
+  thumbnailCtx.strokeRect(0, 0, displayWidth, displayHeight)
 
   // 绘制缩略图上的视窗框（显示当前查看区域）
   thumbnailCtx.strokeStyle = '#ff0000'
@@ -797,6 +903,32 @@ const initCanvas = () => {
     gridCtx.scale(devicePixelRatio, devicePixelRatio)
   }
 
+  // 初始化缩略图画布
+  if (thumbnailRef.value) {
+    const thumbnailCtx = thumbnailRef.value.getContext('2d')
+    if (thumbnailCtx) {
+      const thumbnailCanvas = thumbnailRef.value
+      const devicePixelRatio = window.devicePixelRatio || 1
+
+      // 设置缩略图画布的高分辨率
+      const displayWidth = thumbnailWidth.value
+      const displayHeight = thumbnailHeight.value
+      const canvasWidth = displayWidth * devicePixelRatio
+      const canvasHeight = displayHeight * devicePixelRatio
+
+      // 设置实际画布尺寸（高分辨率）
+      thumbnailCanvas.width = canvasWidth
+      thumbnailCanvas.height = canvasHeight
+
+      // 设置显示尺寸
+      thumbnailCanvas.style.width = displayWidth + 'px'
+      thumbnailCanvas.style.height = displayHeight + 'px'
+
+      // 缩放上下文以匹配设备像素比
+      thumbnailCtx.scale(devicePixelRatio, devicePixelRatio)
+    }
+  }
+
   // 加载背景图片
   loadBackgroundImage()
 }
@@ -836,20 +968,140 @@ const getGridCoordinates = (mouseX: number, mouseY: number) => {
   return null
 }
 
+// 使用 Bresenham 算法连接两个格子之间的所有格子（用于画笔连贯性）
+const drawLineBetweenCells = (fromCol: number, fromRow: number, toCol: number, toRow: number) => {
+  const cells: { col: number; row: number }[] = []
+
+  let x0 = fromCol
+  let y0 = fromRow
+  const x1 = toCol
+  const y1 = toRow
+
+  const dx = Math.abs(x1 - x0)
+  const dy = Math.abs(y1 - y0)
+  const sx = x0 < x1 ? 1 : -1
+  const sy = y0 < y1 ? 1 : -1
+  let err = dx - dy
+
+  while (true) {
+    cells.push({ col: x0, row: y0 })
+
+    if (x0 === x1 && y0 === y1) break
+
+    const e2 = 2 * err
+    if (e2 > -dy) {
+      err -= dy
+      x0 += sx
+    }
+    if (e2 < dx) {
+      err += dx
+      y0 += sy
+    }
+  }
+
+  return cells
+}
+
+// 连贯绘制格子（处理画笔连贯性）
+const paintCellWithContinuity = (col: number, row: number) => {
+  if (lastDrawnCell.value && (currentTool.value === 'brush' || currentTool.value === 'eraser')) {
+    // 如果有上一个绘制位置，使用插值算法连接两个点
+    const cells = drawLineBetweenCells(lastDrawnCell.value.col, lastDrawnCell.value.row, col, row)
+
+    // 绘制所有插值格子
+    for (const cell of cells) {
+      const cellKey = `${cell.col},${cell.row}`
+      if (currentTool.value === 'brush') {
+        drawnCells.value.set(cellKey, brushColor.value)
+      } else if (currentTool.value === 'eraser') {
+        drawnCells.value.delete(cellKey)
+      }
+    }
+
+    drawCanvas()
+  } else {
+    // 第一次绘制或非画笔/橡皮擦工具，直接绘制单个格子
+    paintCell(col, row)
+  }
+
+  // 更新上一个绘制位置
+  if (currentTool.value === 'brush' || currentTool.value === 'eraser') {
+    lastDrawnCell.value = { col, row }
+  }
+}
+
 // 绘制或擦除格子
 const paintCell = (col: number, row: number) => {
   const cellKey = `${col},${row}`
 
-  if (drawnCells.value.has(cellKey)) {
-    // 如果格子已经被绘制，则擦除它
-    drawnCells.value.delete(cellKey)
-  } else {
-    // 否则用当前颜色绘制格子
+  if (currentTool.value === 'eraser') {
+    // 橡皮擦工具：只擦除格子
+    if (drawnCells.value.has(cellKey)) {
+      drawnCells.value.delete(cellKey)
+    }
+  } else if (currentTool.value === 'brush') {
+    // 画笔工具：绘制格子
     drawnCells.value.set(cellKey, brushColor.value)
+  } else if (currentTool.value === 'bucket') {
+    // 油桶填充工具：洪水填充
+    floodFill(col, row, brushColor.value)
   }
 
   // 重新绘制画布
   drawCanvas()
+}
+
+// 洪水填充算法
+const floodFill = (startCol: number, startRow: number, fillColor: string) => {
+  const startKey = `${startCol},${startRow}`
+  const targetColor = drawnCells.value.get(startKey) || null // 目标颜色（要被替换的颜色）
+
+  // 如果目标颜色和填充颜色相同，不需要填充
+  if (targetColor === fillColor) {
+    return
+  }
+
+  // 使用栈来实现非递归的洪水填充算法
+  const stack: Array<{ col: number; row: number }> = [{ col: startCol, row: startRow }]
+  const visited = new Set<string>()
+
+  while (stack.length > 0) {
+    const { col, row } = stack.pop()!
+    const cellKey = `${col},${row}`
+
+    // 检查边界条件
+    if (
+      col < 0 ||
+      col >= canvasConfig.value.gridCols ||
+      row < 0 ||
+      row >= canvasConfig.value.gridRows ||
+      visited.has(cellKey)
+    ) {
+      continue
+    }
+
+    // 检查当前格子的颜色
+    const currentColor = drawnCells.value.get(cellKey) || null
+    if (currentColor !== targetColor) {
+      continue
+    }
+
+    // 标记为已访问
+    visited.add(cellKey)
+
+    // 填充当前格子
+    if (fillColor) {
+      drawnCells.value.set(cellKey, fillColor)
+    } else {
+      drawnCells.value.delete(cellKey)
+    }
+
+    // 添加相邻的四个格子到栈中
+    stack.push({ col: col + 1, row: row }) // 右
+    stack.push({ col: col - 1, row: row }) // 左
+    stack.push({ col: col, row: row + 1 }) // 下
+    stack.push({ col: col, row: row - 1 }) // 上
+  }
 }
 
 // 开始绘制或拖拽
@@ -863,34 +1115,63 @@ const startDrawing = (e: MouseEvent) => {
   const mouseX = (e.clientX - rect.left) * displayScaleX
   const mouseY = (e.clientY - rect.top) * displayScaleY
 
-  // 检查是否点击在视窗框内
-  if (isPointInViewportBox(mouseX, mouseY)) {
-    if (currentTool.value === 'move') {
-      // 移动工具：开始拖拽视窗框（实际是移动背景）
-      viewportBox.value.isDragging = true
-      viewportBox.value.dragStartX = mouseX
-      viewportBox.value.dragStartY = mouseY
-      viewportBox.value.initialOffsetX = viewportBox.value.offsetX
-      viewportBox.value.initialOffsetY = viewportBox.value.offsetY
-    } else if (currentTool.value === 'brush') {
-      // 画笔工具：在开始绘制前保存当前状态
-      saveToHistory()
+  // 检测是否为右键点击
+  const isRightClick = e.button === 2
 
-      // 绘制格子
-      const gridCoords = getGridCoordinates(mouseX, mouseY)
-      if (gridCoords) {
-        paintCell(gridCoords.col, gridCoords.row)
-        isDrawing.value = true
-        isDragDrawing.value = true
+  // 如果是右键点击，无论当前工具是什么，都启用移动功能
+  if (isRightClick && isPointInViewportBox(mouseX, mouseY)) {
+    isRightDragging.value = true
+    viewportBox.value.isDragging = true
+    viewportBox.value.dragStartX = mouseX
+    viewportBox.value.dragStartY = mouseY
+    viewportBox.value.initialOffsetX = viewportBox.value.offsetX
+    viewportBox.value.initialOffsetY = viewportBox.value.offsetY
+    return
+  }
+
+  // 左键点击的原有逻辑
+  if (!isRightClick) {
+    // 检查是否点击在视窗框内
+    if (isPointInViewportBox(mouseX, mouseY)) {
+      if (currentTool.value === 'move') {
+        // 移动工具：开始拖拽视窗框（实际是移动背景）
+        viewportBox.value.isDragging = true
+        viewportBox.value.dragStartX = mouseX
+        viewportBox.value.dragStartY = mouseY
+        viewportBox.value.initialOffsetX = viewportBox.value.offsetX
+        viewportBox.value.initialOffsetY = viewportBox.value.offsetY
+      } else if (currentTool.value === 'brush' || currentTool.value === 'eraser') {
+        // 画笔工具或橡皮擦工具：在开始绘制前保存当前状态
+        saveToHistory()
+
+        // 重置上一个绘制位置（开始新的绘制操作）
+        lastDrawnCell.value = null
+
+        // 绘制或擦除格子
+        const gridCoords = getGridCoordinates(mouseX, mouseY)
+        if (gridCoords) {
+          paintCellWithContinuity(gridCoords.col, gridCoords.row)
+          isDrawing.value = true
+          isDragDrawing.value = true
+        }
+      } else if (currentTool.value === 'bucket') {
+        // 油桶填充工具：在填充前保存当前状态
+        saveToHistory()
+
+        // 执行洪水填充
+        const gridCoords = getGridCoordinates(mouseX, mouseY)
+        if (gridCoords) {
+          paintCell(gridCoords.col, gridCoords.row)
+        }
       }
-    }
-  } else {
-    // 点击在视窗框外的区域
-    if (currentTool.value === 'move') {
-      // 移动工具：开始自由绘制（保持原有功能）
-      isDrawing.value = true
-      lastX.value = mouseX
-      lastY.value = mouseY
+    } else {
+      // 点击在视窗框外的区域
+      if (currentTool.value === 'move') {
+        // 移动工具：开始自由绘制（保持原有功能）
+        isDrawing.value = true
+        lastX.value = mouseX
+        lastY.value = mouseY
+      }
     }
   }
 }
@@ -906,8 +1187,8 @@ const draw = (e: MouseEvent) => {
   const currentX = (e.clientX - rect.left) * displayScaleX
   const currentY = (e.clientY - rect.top) * displayScaleY
 
-  if (viewportBox.value.isDragging && currentTool.value === 'move') {
-    // 移动工具：拖拽视窗框（实际是移动背景偏移量）
+  if (viewportBox.value.isDragging && (currentTool.value === 'move' || isRightDragging.value)) {
+    // 移动工具或右键拖拽：拖拽视窗框（实际是移动背景偏移量）
     const deltaX = currentX - viewportBox.value.dragStartX
     const deltaY = currentY - viewportBox.value.dragStartY
 
@@ -929,19 +1210,18 @@ const draw = (e: MouseEvent) => {
     drawCanvas()
   } else if (
     isDrawing.value &&
-    currentTool.value === 'brush' &&
+    (currentTool.value === 'brush' || currentTool.value === 'eraser') &&
     isPointInViewportBox(currentX, currentY)
   ) {
-    // 画笔工具：拖拽绘制格子
+    // 画笔工具或橡皮擦工具：拖拽绘制或擦除格子
     const gridCoords = getGridCoordinates(currentX, currentY)
     if (gridCoords) {
-      const cellKey = `${gridCoords.col},${gridCoords.row}`
-      if (!drawnCells.value.has(cellKey)) {
-        drawnCells.value.set(cellKey, brushColor.value)
-        drawCanvas()
-      }
+      // 使用连贯绘制函数确保快速移动时不跳过格子
+      paintCellWithContinuity(gridCoords.col, gridCoords.row)
     }
-  } else if (isDrawing.value && currentTool.value === 'move' && canvasRef.value) {
+  }
+  // 注意：油桶填充工具不支持拖拽操作，只在点击时执行填充
+  else if (isDrawing.value && currentTool.value === 'move' && canvasRef.value) {
     // 移动工具：自由绘制线条（保持原有功能）
     const ctx = canvasRef.value.getContext('2d')
     if (!ctx) return
@@ -973,6 +1253,10 @@ const stopDrawing = () => {
 
   isDrawing.value = false
   viewportBox.value.isDragging = false
+  isRightDragging.value = false
+
+  // 重置上一个绘制位置（结束绘制操作）
+  lastDrawnCell.value = null
 }
 
 // 处理滚轮缩放
@@ -1057,6 +1341,233 @@ const onThumbnailClick = (e: MouseEvent) => {
 
   // 重新绘制画布和网格
   drawCanvas()
+}
+
+// 显示完整画布预览
+const showFullImage = () => {
+  showPreviewModal.value = true
+  nextTick(() => {
+    renderFullCanvas()
+  })
+}
+
+// 关闭预览弹窗
+const closePreviewModal = () => {
+  showPreviewModal.value = false
+}
+
+// 渲染完整画布到预览画布
+const renderFullCanvas = () => {
+  if (!previewCanvasRef.value) return
+
+  const canvas = previewCanvasRef.value
+  const ctx = canvas.getContext('2d')
+  if (!ctx) return
+
+  // 计算合适的预览尺寸（保持原始比例，但限制最大尺寸）
+  const originalWidth = calculatedWidth.value
+  const originalHeight = calculatedHeight.value
+  const maxPreviewSize = Math.min(window.innerWidth * 0.8, window.innerHeight * 0.7, 1200)
+
+  let previewWidth = originalWidth
+  let previewHeight = originalHeight
+
+  // 如果画布太大，按比例缩放
+  if (originalWidth > maxPreviewSize || originalHeight > maxPreviewSize) {
+    const scale = Math.min(maxPreviewSize / originalWidth, maxPreviewSize / originalHeight)
+    previewWidth = originalWidth * scale
+    previewHeight = originalHeight * scale
+  }
+
+  // 设置画布尺寸
+  canvas.width = previewWidth
+  canvas.height = previewHeight
+
+  // 设置画布样式尺寸（CSS尺寸）
+  canvas.style.width = previewWidth + 'px'
+  canvas.style.height = previewHeight + 'px'
+
+  // 禁用图像平滑以获得像素完美的清晰度
+  ctx.imageSmoothingEnabled = false
+
+  // 清空画布
+  ctx.clearRect(0, 0, canvas.width, canvas.height)
+
+  // 计算缩放比例
+  const scaleX = previewWidth / originalWidth
+  const scaleY = previewHeight / originalHeight
+
+  // 绘制背景图片（如果有）
+  if (backgroundImage.value && imageLoaded.value) {
+    // 使用高质量的图像绘制
+    ctx.drawImage(backgroundImage.value, 0, 0, previewWidth, previewHeight)
+  } else {
+    // 如果没有背景图片，填充白色背景
+    ctx.fillStyle = '#ffffff'
+    ctx.fillRect(0, 0, previewWidth, previewHeight)
+  }
+
+  // 绘制所有已填充的格子
+  const cellWidth = gridCellWidth.value * scaleX
+  const cellHeight = gridCellHeight.value * scaleY
+
+  drawnCells.value.forEach((color, cellKey) => {
+    const [col, row] = cellKey.split(',').map(Number)
+    const x = col * cellWidth
+    const y = row * cellHeight
+
+    ctx.fillStyle = color
+    ctx.fillRect(x, y, cellWidth, cellHeight)
+  })
+}
+
+// 下载完整画布图片
+const downloadFullImage = () => {
+  // 创建一个临时画布用于生成原始尺寸的图片
+  const tempCanvas = document.createElement('canvas')
+  const tempCtx = tempCanvas.getContext('2d')
+  if (!tempCtx) return
+
+  // 设置为原始画布尺寸
+  tempCanvas.width = calculatedWidth.value
+  tempCanvas.height = calculatedHeight.value
+
+  // 清空画布
+  tempCtx.clearRect(0, 0, tempCanvas.width, tempCanvas.height)
+
+  // 绘制背景图片（如果有）
+  if (backgroundImage.value && imageLoaded.value) {
+    tempCtx.drawImage(backgroundImage.value, 0, 0, tempCanvas.width, tempCanvas.height)
+  } else {
+    // 如果没有背景图片，填充白色背景
+    tempCtx.fillStyle = '#ffffff'
+    tempCtx.fillRect(0, 0, tempCanvas.width, tempCanvas.height)
+  }
+
+  // 绘制所有已填充的格子（原始尺寸）
+  const cellWidth = gridCellWidth.value
+  const cellHeight = gridCellHeight.value
+
+  drawnCells.value.forEach((color, cellKey) => {
+    const [col, row] = cellKey.split(',').map(Number)
+    const x = col * cellWidth
+    const y = row * cellHeight
+
+    tempCtx.fillStyle = color
+    tempCtx.fillRect(x, y, cellWidth, cellHeight)
+  })
+
+  // 创建下载链接
+  const link = document.createElement('a')
+  link.download = `canvas-${Date.now()}.png`
+  link.href = tempCanvas.toDataURL('image/png')
+  link.click()
+}
+
+// 获取背景画布所有颜色数组
+const getCanvasColors = (): string[] => {
+  const colors = new Set<string>()
+
+  // 创建一个临时画布来渲染完整的背景画布
+  const tempCanvas = document.createElement('canvas')
+  const tempCtx = tempCanvas.getContext('2d')
+  if (!tempCtx) {
+    console.warn('无法创建临时画布上下文')
+    return []
+  }
+
+  // 设置临时画布尺寸为完整的背景画布尺寸
+  const fullWidth = calculatedWidth.value
+  const fullHeight = calculatedHeight.value
+  tempCanvas.width = fullWidth
+  tempCanvas.height = fullHeight
+
+  // 禁用图像平滑以获得像素完美的清晰度
+  tempCtx.imageSmoothingEnabled = false
+
+  // 清空画布（白色背景）
+  tempCtx.fillStyle = '#ffffff'
+  tempCtx.fillRect(0, 0, fullWidth, fullHeight)
+
+  // 绘制背景图片（如果有）
+  if (backgroundImage.value && imageLoaded.value) {
+    tempCtx.drawImage(backgroundImage.value, 0, 0, fullWidth, fullHeight)
+  }
+
+  // 绘制所有已绘制的格子
+  const cellWidth = gridCellWidth.value
+  const cellHeight = gridCellHeight.value
+
+  drawnCells.value.forEach((color, cellKey) => {
+    const [col, row] = cellKey.split(',').map(Number)
+    const x = col * cellWidth
+    const y = row * cellHeight
+
+    tempCtx.fillStyle = color
+    tempCtx.fillRect(x, y, cellWidth, cellHeight)
+  })
+
+  // 获取完整画布的 imageData
+  try {
+    const imageData = tempCtx.getImageData(0, 0, fullWidth, fullHeight)
+    const data = imageData.data
+
+    // 遍历所有像素，提取颜色
+    for (let i = 0; i < data.length; i += 4) {
+      const r = data[i]
+      const g = data[i + 1]
+      const b = data[i + 2]
+      const a = data[i + 3]
+
+      // 只处理不透明的像素
+      if (a > 0) {
+        // 将RGB值转换为十六进制
+        const hex =
+          '#' +
+          ('0' + r.toString(16)).slice(-2) +
+          ('0' + g.toString(16)).slice(-2) +
+          ('0' + b.toString(16)).slice(-2)
+
+        // 排除纯白色背景
+        if (hex !== '#ffffff') {
+          colors.add(hex)
+        }
+      }
+    }
+  } catch (error) {
+    console.warn('无法获取完整画布的像素数据:', error)
+
+    // 降级方案：只从已绘制的格子中获取颜色
+    drawnCells.value.forEach((color) => {
+      if (color && color !== '#ffffff') {
+        colors.add(color)
+      }
+    })
+  }
+
+  // 转换为数组并排序
+  return Array.from(colors).sort()
+}
+
+// 显示画布颜色数组
+const showCanvasColors = () => {
+  const colors = getCanvasColors()
+
+  // 更新响应式颜色数组
+  canvasColors.value = colors
+
+  if (colors.length === 0) {
+    alert('画布中没有检测到颜色，请先绘制一些内容或加载背景图片。')
+    return
+  }
+
+  // 在控制台输出详细信息
+  console.log('画布颜色数组:', colors)
+  console.log('颜色数量:', colors.length)
+  console.log('已绘制格子数量:', drawnCells.value.size)
+
+  // 显示成功提示
+  alert(`成功获取到 ${colors.length} 种颜色，已在页面上显示！`)
 }
 
 // 键盘事件处理
@@ -1264,7 +1775,9 @@ onUnmounted(() => {
     }
   }
 
-  .brush-settings {
+  .brush-settings,
+  .eraser-settings,
+  .bucket-settings {
     display: flex;
     align-items: center;
     gap: 0.5rem;
@@ -1334,6 +1847,22 @@ onUnmounted(() => {
         background-color: #6c757d;
         cursor: not-allowed;
         opacity: 0.6;
+      }
+    }
+
+    .preview-btn {
+      padding: 0.25rem 0.75rem;
+      background-color: #28a745;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 0.8rem;
+      transition: all 0.2s;
+      min-width: 80px;
+
+      &:hover {
+        background-color: #218838;
       }
     }
   }
@@ -1418,6 +1947,68 @@ onUnmounted(() => {
       }
     }
   }
+
+  .colors-panel {
+    margin-top: 1rem;
+    padding: 1rem;
+    background-color: #f8f9fa;
+    border-radius: 8px;
+    border: 1px solid #dee2e6;
+    max-width: 100%;
+
+    h4 {
+      margin: 0 0 0.75rem 0;
+      font-size: 1rem;
+      color: #495057;
+      font-weight: 600;
+    }
+
+    .colors-grid {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      max-height: 200px;
+      overflow-y: auto;
+    }
+
+    .color-item {
+      position: relative;
+      width: 60px;
+      height: 40px;
+      border-radius: 6px;
+      border: 2px solid #fff;
+      box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+      cursor: pointer;
+      transition: all 0.2s ease;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+
+      &:hover {
+        transform: scale(1.05);
+        box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+        z-index: 10;
+      }
+
+      .color-text {
+        font-size: 0.7rem;
+        font-weight: 500;
+        color: #fff;
+        text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.7);
+        background: rgba(0, 0, 0, 0.3);
+        padding: 2px 4px;
+        border-radius: 3px;
+        white-space: nowrap;
+        opacity: 0;
+        transition: opacity 0.2s ease;
+      }
+
+      &:hover .color-text {
+        opacity: 1;
+      }
+    }
+  }
 }
 
 .canvas-wrapper {
@@ -1452,12 +2043,26 @@ onUnmounted(() => {
       crosshair;
   }
 
+  &.eraser-cursor {
+    cursor:
+      url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><rect x="4" y="8" width="16" height="8" rx="2" fill="none" stroke="%23666" stroke-width="2"/><path d="M8 12h8" stroke="%23666" stroke-width="2"/></svg>')
+        12 12,
+      crosshair;
+  }
+
   &.move-cursor {
     cursor: grab;
 
     &:active {
       cursor: grabbing;
     }
+  }
+
+  &.bucket-cursor {
+    cursor:
+      url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><path d="M12 2L8 6h8l-4-4z" fill="%23007bff"/><path d="M8 6v10c0 2 2 4 4 4s4-2 4-4V6H8z" fill="none" stroke="%23007bff" stroke-width="2"/><circle cx="12" cy="10" r="1" fill="%23007bff"/></svg>')
+        12 12,
+      crosshair;
   }
 }
 
@@ -1466,7 +2071,7 @@ onUnmounted(() => {
   top: 0;
   left: 0;
   pointer-events: none;
-  z-index: 1;
+  z-index: 0;
 }
 
 .thumbnail-container {
@@ -1489,6 +2094,130 @@ onUnmounted(() => {
 
   &:hover {
     transform: scale(1.05);
+  }
+}
+
+// 预览弹窗样式
+.preview-modal {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background-color: rgba(0, 0, 0, 0.8);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 2000;
+  backdrop-filter: blur(5px);
+}
+
+.preview-modal-content {
+  background: white;
+  border-radius: 12px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+  max-width: 95vw;
+  max-height: 95vh;
+  width: auto;
+  height: auto;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.preview-modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1rem 1.5rem;
+  border-bottom: 1px solid #e9ecef;
+  background-color: #f8f9fa;
+
+  h3 {
+    margin: 0;
+    color: #333;
+    font-size: 1.2rem;
+  }
+
+  .close-btn {
+    background: none;
+    border: none;
+    font-size: 1.5rem;
+    cursor: pointer;
+    color: #666;
+    padding: 0;
+    width: 30px;
+    height: 30px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    transition: all 0.2s;
+
+    &:hover {
+      background-color: #e9ecef;
+      color: #333;
+    }
+  }
+}
+
+.preview-modal-body {
+  flex: 1;
+  padding: 1rem;
+  overflow: auto;
+  display: flex;
+  justify-content: flex-start;
+  align-items: flex-start;
+  background-color: #f8f9fa;
+  min-height: 0;
+
+  .preview-canvas {
+    border: 1px solid #dee2e6;
+    border-radius: 8px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+    background: white;
+    display: block;
+    min-width: auto;
+    min-height: auto;
+  }
+}
+
+.preview-modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.75rem;
+  padding: 1rem 1.5rem;
+  border-top: 1px solid #e9ecef;
+  background-color: #f8f9fa;
+
+  .download-btn {
+    padding: 0.5rem 1rem;
+    background-color: #007bff;
+    color: white;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 0.9rem;
+    transition: all 0.2s;
+
+    &:hover {
+      background-color: #0056b3;
+    }
+  }
+
+  .cancel-btn {
+    padding: 0.5rem 1rem;
+    background-color: #6c757d;
+    color: white;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 0.9rem;
+    transition: all 0.2s;
+
+    &:hover {
+      background-color: #545b62;
+    }
   }
 }
 </style>
