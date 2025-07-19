@@ -1532,10 +1532,8 @@ const getCanvasColors = (): string[] => {
           ('0' + g.toString(16)).slice(-2) +
           ('0' + b.toString(16)).slice(-2)
 
-        // 排除纯白色背景
-        if (hex !== '#ffffff') {
-          colors.add(hex)
-        }
+        // 添加所有颜色（包括白色）
+        colors.add(hex)
       }
     }
   } catch (error) {
@@ -1543,7 +1541,7 @@ const getCanvasColors = (): string[] => {
 
     // 降级方案：只从已绘制的格子中获取颜色
     drawnCells.value.forEach((color) => {
-      if (color && color !== '#ffffff') {
+      if (color) {
         colors.add(color)
       }
     })
