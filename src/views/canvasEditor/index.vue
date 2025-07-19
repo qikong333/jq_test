@@ -724,7 +724,8 @@ const drawGrid = () => {
 
   ctx.stroke()
 
-  // 绘制已填充的格子
+  // 绘制已填充的格子（确保完全不透明）
+  ctx.globalAlpha = 1.0 // 重置透明度为完全不透明
   drawnCells.value.forEach((color, cellKey) => {
     const [col, row] = cellKey.split(',').map(Number)
     const cellX = startX + col * cellWidth
@@ -738,14 +739,13 @@ const drawGrid = () => {
       cellY <= viewportBox.value.fixedY + viewportBox.value.height
     ) {
       ctx.fillStyle = color
-      ctx.globalAlpha = 1.0
+      // 使用Math.round确保坐标为整数，避免亚像素渲染导致的边缘色差
       ctx.fillRect(
-        Math.max(cellX, viewportBox.value.fixedX),
-        Math.max(cellY, viewportBox.value.fixedY),
-        Math.min(cellWidth, viewportBox.value.fixedX + viewportBox.value.width - cellX),
-        Math.min(cellHeight, viewportBox.value.fixedY + viewportBox.value.height - cellY),
+        Math.round(Math.max(cellX, viewportBox.value.fixedX)),
+        Math.round(Math.max(cellY, viewportBox.value.fixedY)),
+        Math.round(Math.min(cellWidth, viewportBox.value.fixedX + viewportBox.value.width - cellX)),
+        Math.round(Math.min(cellHeight, viewportBox.value.fixedY + viewportBox.value.height - cellY)),
       )
-      ctx.globalAlpha = 0.6 // 恢复网格线透明度
     }
   })
 
@@ -837,9 +837,7 @@ const updateThumbnail = () => {
     const cellY = row * cellHeight
 
     thumbnailCtx.fillStyle = color
-    thumbnailCtx.globalAlpha = 1.0
     thumbnailCtx.fillRect(cellX, cellY, cellWidth, cellHeight)
-    thumbnailCtx.globalAlpha = 1.0 // 恢复透明度
   })
 
   // 添加边框
@@ -1417,7 +1415,8 @@ const renderFullCanvas = () => {
     const y = row * cellHeight
 
     ctx.fillStyle = color
-    ctx.fillRect(x, y, cellWidth, cellHeight)
+    // 使用Math.round确保坐标为整数，避免亚像素渲染导致的边缘色差
+    ctx.fillRect(Math.round(x), Math.round(y), Math.round(cellWidth), Math.round(cellHeight))
   })
 }
 
@@ -1431,6 +1430,9 @@ const downloadFullImage = () => {
   // 设置为原始画布尺寸
   tempCanvas.width = calculatedWidth.value
   tempCanvas.height = calculatedHeight.value
+
+  // 禁用图像平滑以获得像素完美的清晰度
+  tempCtx.imageSmoothingEnabled = false
 
   // 清空画布
   tempCtx.clearRect(0, 0, tempCanvas.width, tempCanvas.height)
@@ -1454,7 +1456,8 @@ const downloadFullImage = () => {
     const y = row * cellHeight
 
     tempCtx.fillStyle = color
-    tempCtx.fillRect(x, y, cellWidth, cellHeight)
+    // 使用Math.round确保坐标为整数，避免亚像素渲染导致的边缘色差
+    tempCtx.fillRect(Math.round(x), Math.round(y), Math.round(cellWidth), Math.round(cellHeight))
   })
 
   // 创建下载链接
@@ -1504,7 +1507,8 @@ const getCanvasColors = (): string[] => {
     const y = row * cellHeight
 
     tempCtx.fillStyle = color
-    tempCtx.fillRect(x, y, cellWidth, cellHeight)
+    // 使用Math.round确保坐标为整数，避免亚像素渲染导致的边缘色差
+    tempCtx.fillRect(Math.round(x), Math.round(y), Math.round(cellWidth), Math.round(cellHeight))
   })
 
   // 获取完整画布的 imageData
@@ -2091,6 +2095,9 @@ onUnmounted(() => {
   border-radius: 4px;
   cursor: pointer;
   transition: transform 0.2s ease;
+  image-rendering: -webkit-optimize-contrast;
+  image-rendering: crisp-edges;
+  image-rendering: pixelated;
 
   &:hover {
     transform: scale(1.05);
@@ -2179,6 +2186,9 @@ onUnmounted(() => {
     display: block;
     min-width: auto;
     min-height: auto;
+    image-rendering: -webkit-optimize-contrast;
+    image-rendering: crisp-edges;
+    image-rendering: pixelated;
   }
 }
 
