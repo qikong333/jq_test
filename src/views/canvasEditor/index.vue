@@ -2039,17 +2039,11 @@ onUnmounted(() => {
   display: block;
 
   &.brush-cursor {
-    cursor:
-      url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8" fill="none" stroke="%23ff0000" stroke-width="2"/><circle cx="12" cy="12" r="2" fill="%23ff0000"/></svg>')
-        12 12,
-      crosshair;
+    cursor: crosshair;
   }
 
   &.eraser-cursor {
-    cursor:
-      url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><rect x="4" y="8" width="16" height="8" rx="2" fill="none" stroke="%23666" stroke-width="2"/><path d="M8 12h8" stroke="%23666" stroke-width="2"/></svg>')
-        12 12,
-      crosshair;
+    cursor: crosshair;
   }
 
   &.move-cursor {
@@ -2061,10 +2055,7 @@ onUnmounted(() => {
   }
 
   &.bucket-cursor {
-    cursor:
-      url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><path d="M12 2L8 6h8l-4-4z" fill="%23007bff"/><path d="M8 6v10c0 2 2 4 4 4s4-2 4-4V6H8z" fill="none" stroke="%23007bff" stroke-width="2"/><circle cx="12" cy="10" r="1" fill="%23007bff"/></svg>')
-        12 12,
-      crosshair;
+    cursor: crosshair;
   }
 }
 
