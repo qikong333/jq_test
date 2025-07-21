@@ -34,7 +34,14 @@
 
     <!-- 画布编辑器 -->
     <div class="canvas-container" v-if="canvasCreated">
-      <div class="toolbar">
+      <!-- 浮动工具栏 -->
+      <div class="floating-toolbar" :class="{ 'toolbar-hidden': isToolbarHidden }">
+        <!-- 工具栏切换按钮 -->
+        <button class="toolbar-toggle" @click="toggleToolbar">
+          {{ isToolbarHidden ? '▶' : '◀' }}
+        </button>
+        
+        <div class="toolbar-content" v-show="!isToolbarHidden">
         <button @click="resetCanvas" class="reset-btn">重新创建背景画布</button>
         <div class="upload-section">
           <input
@@ -73,12 +80,36 @@
           >
             油桶填充
           </button>
+          <button
+            @click="setTool('line')"
+            :class="['tool-btn', { active: currentTool === 'line' }]"
+          >
+            直线工具
+          </button>
+          <button
+            @click="setTool('select')"
+            :class="['tool-btn', { active: currentTool === 'select' }]"
+          >
+            矩形选择
+          </button>
         </div>
 
         <!-- 画笔设置 -->
         <div class="brush-settings" v-if="currentTool === 'brush'">
           <label>画笔颜色:</label>
           <input type="color" v-model="brushColor" class="color-picker" />
+          <div class="brush-size-control">
+            <label>画笔粗细:</label>
+            <input 
+              type="range" 
+              v-model.number="brushSize" 
+              min="1" 
+              max="10" 
+              step="1" 
+              class="brush-size-slider" 
+            />
+            <span class="brush-size-display">{{ brushSize }}x{{ brushSize }}</span>
+          </div>
           <button @click="clearGrid" class="clear-btn">清除格子</button>
         </div>
 
@@ -93,6 +124,44 @@
           <label>填充颜色:</label>
           <input type="color" v-model="brushColor" class="color-picker" />
           <button @click="clearGrid" class="clear-btn">清除格子</button>
+        </div>
+
+        <!-- 直线工具设置 -->
+        <div class="line-settings" v-if="currentTool === 'line'">
+          <label>直线颜色:</label>
+          <input type="color" v-model="brushColor" class="color-picker" />
+          <div class="brush-size-control">
+            <label>直线粗细:</label>
+            <input 
+              type="range" 
+              v-model.number="brushSize" 
+              min="1" 
+              max="10" 
+              step="1" 
+              class="brush-size-slider" 
+            />
+            <span class="brush-size-display">{{ brushSize }}x{{ brushSize }}</span>
+          </div>
+          <button @click="clearGrid" class="clear-btn">清除格子</button>
+        </div>
+
+        <!-- 矩形选择工具设置 -->
+        <div class="select-settings" v-if="currentTool === 'select'">
+          <label>矩形选择工具</label>
+          <div class="selection-info" v-if="selectedArea">
+            <p>选择区域: {{ selectedArea.startCol }},{{ selectedArea.startRow }} 到 {{ selectedArea.endCol }},{{ selectedArea.endRow }}</p>
+            <p>尺寸: {{ selectedArea.width }}x{{ selectedArea.height }} 格子</p>
+          </div>
+          <div class="selection-actions" v-if="selectedArea">
+            <button @click="copySelectedArea" class="action-btn">复制选区</button>
+            <button @click="cutSelectedArea" class="action-btn">剪切选区</button>
+            <button @click="deleteSelectedArea" class="action-btn">删除选区</button>
+            <button @click="exportSelectedArea" class="action-btn">导出选区</button>
+            <button @click="clearSelection" class="clear-btn">清除选择</button>
+          </div>
+          <div v-else>
+            <p>拖拽鼠标创建选择区域</p>
+          </div>
         </div>
 
         <!-- 撤销重做按钮 -->
@@ -158,7 +227,11 @@
                 ? '画笔工具'
                 : currentTool === 'eraser'
                   ? '橡皮擦工具'
-                  : '油桶填充'
+                  : currentTool === 'bucket'
+                    ? '油桶填充'
+                    : currentTool === 'line'
+                      ? '直线工具'
+                      : '矩形选择'
           }}
         </span>
 
@@ -177,6 +250,7 @@
             </div>
           </div>
         </div>
+      </div>
       </div>
 
       <div class="canvas-wrapper">
@@ -201,6 +275,9 @@
             @wheel="handleWheel"
             @contextmenu.prevent
           ></canvas>
+
+          <!-- 预览层画布 -->
+          <canvas ref="previewLayerRef" class="preview-layer-canvas"></canvas>
 
           <!-- 网格画布 -->
           <canvas ref="gridCanvasRef" class="grid-canvas"></canvas>
@@ -261,6 +338,7 @@ const canvasCreated = ref(false)
 // 画布引用
 const canvasRef = ref<HTMLCanvasElement | null>(null)
 const gridCanvasRef = ref<HTMLCanvasElement | null>(null)
+const previewLayerRef = ref<HTMLCanvasElement | null>(null)
 const thumbnailRef = ref<HTMLCanvasElement | null>(null)
 const fileInputRef = ref<HTMLInputElement | null>(null)
 const previewCanvasRef = ref<HTMLCanvasElement | null>(null)
@@ -277,14 +355,45 @@ const backgroundImage = ref<HTMLImageElement | null>(null)
 const imageLoaded = ref(false)
 
 // 工具状态
-const currentTool = ref<'move' | 'brush' | 'eraser' | 'bucket'>('brush')
+const currentTool = ref<'move' | 'brush' | 'eraser' | 'bucket' | 'line' | 'select'>('brush')
+const isToolbarHidden = ref(false)
+
+// 切换工具栏显示/隐藏
+const toggleToolbar = () => {
+  isToolbarHidden.value = !isToolbarHidden.value
+}
 const brushColor = ref('#ff0000')
+const brushSize = ref(1) // 画笔粗细，表示绘制的格子数量（1x1, 2x2, 3x3等）
+
+// 直线工具状态
+const lineStartCell = ref<{ col: number; row: number } | null>(null)
+const lineEndCell = ref<{ col: number; row: number } | null>(null)
+const isDrawingLine = ref(false)
+const linePreviewCells = ref<{ col: number; row: number }[]>([])
+
+// 矩形选择工具状态
+const isSelecting = ref(false)
+const selectionStart = ref<{ col: number; row: number } | null>(null)
+const selectionEnd = ref<{ col: number; row: number } | null>(null)
+const selectedArea = ref<{
+  startCol: number
+  startRow: number
+  endCol: number
+  endRow: number
+  width: number
+  height: number
+} | null>(null)
+const selectedImageData = ref<Map<string, string> | null>(null)
+const copiedImageData = ref<Map<string, string> | null>(null)
 
 // 存储绘制的格子数据
 const drawnCells = ref<Map<string, string>>(new Map())
 
 // 记录上一个绘制的格子位置（用于画笔连贯性）
 const lastDrawnCell = ref<{ col: number; row: number } | null>(null)
+
+// 预览层状态
+const previewCell = ref<{ col: number; row: number } | null>(null)
 
 // 撤销重做功能
 const history = ref<Map<string, string>[]>([new Map()]) // 历史记录数组
@@ -416,8 +525,23 @@ const resetCanvas = () => {
 }
 
 // 设置当前工具
-const setTool = (tool: 'move' | 'brush' | 'eraser' | 'bucket') => {
+const setTool = (tool: 'move' | 'brush' | 'eraser' | 'bucket' | 'line' | 'select') => {
   currentTool.value = tool
+  // 切换工具时重置直线状态
+  if (tool !== 'line') {
+    lineStartCell.value = null
+    lineEndCell.value = null
+    isDrawingLine.value = false
+    linePreviewCells.value = []
+  }
+  // 切换工具时重置选择状态
+  if (tool !== 'select') {
+    isSelecting.value = false
+    selectionStart.value = null
+    selectionEnd.value = null
+    selectedArea.value = null
+    selectedImageData.value = null
+  }
 }
 
 // 保存当前状态到历史记录
@@ -476,11 +600,9 @@ const clearGrid = () => {
 const updateGridSize = () => {
   // 验证输入值
   if (tempGridCols.value < 10 || tempGridCols.value > 2000) {
-    alert('列数必须在 10 到 2000 之间')
     return
   }
   if (tempGridRows.value < 10 || tempGridRows.value > 2000) {
-    alert('行数必须在 10 到 2000 之间')
     return
   }
 
@@ -639,6 +761,9 @@ const drawCanvas = () => {
 
   // 绘制网格
   drawGrid()
+
+  // 绘制预览层
+  drawPreviewLayer()
 }
 
 // 绘制网格线
@@ -668,9 +793,8 @@ const drawGrid = () => {
   ctx.strokeStyle = '#cccccc'
   ctx.globalAlpha = 0.6
 
-  // 确保线宽在高DPI屏幕上正确显示
-  const dpr = window.devicePixelRatio || 1
-  ctx.lineWidth = 1 / dpr
+  // 设置网格线宽度
+  ctx.lineWidth = 0.4
 
   // 禁用抗锯齿以确保像素完美的网格线
   ctx.imageSmoothingEnabled = false
@@ -744,12 +868,236 @@ const drawGrid = () => {
         Math.round(Math.max(cellX, viewportBox.value.fixedX)),
         Math.round(Math.max(cellY, viewportBox.value.fixedY)),
         Math.round(Math.min(cellWidth, viewportBox.value.fixedX + viewportBox.value.width - cellX)),
-        Math.round(Math.min(cellHeight, viewportBox.value.fixedY + viewportBox.value.height - cellY)),
+        Math.round(
+          Math.min(cellHeight, viewportBox.value.fixedY + viewportBox.value.height - cellY),
+        ),
       )
     }
   })
 
   // 恢复状态（移除裁剪）
+  ctx.restore()
+}
+
+// 绘制预览层
+const drawPreviewLayer = () => {
+  if (!previewLayerRef.value) return
+
+  const ctx = previewLayerRef.value.getContext('2d')
+  if (!ctx) return
+
+  // 清空预览层画布
+  ctx.clearRect(0, 0, calculatedWidth.value, calculatedHeight.value)
+
+  // 如果没有预览格子、没有直线预览且没有选择区域，或者当前工具不支持预览，直接返回
+  if ((!previewCell.value && linePreviewCells.value.length === 0 && !selectedArea.value && !isSelecting.value) || 
+      currentTool.value === 'move' || currentTool.value === 'bucket') {
+    return
+  }
+
+  // 保存当前状态
+  ctx.save()
+
+  // 设置裁剪区域为视窗框内部
+  ctx.beginPath()
+  ctx.rect(
+    viewportBox.value.fixedX,
+    viewportBox.value.fixedY,
+    viewportBox.value.width,
+    viewportBox.value.height,
+  )
+  ctx.clip()
+
+  // 计算格子尺寸（考虑缩放）
+  const cellWidth = (calculatedWidth.value / canvasConfig.value.gridCols) * viewportBox.value.scale
+  const cellHeight = (calculatedHeight.value / canvasConfig.value.gridRows) * viewportBox.value.scale
+
+  // 计算预览格子的位置（考虑偏移量和缩放）
+  const scaledOffsetX = viewportBox.value.offsetX * viewportBox.value.scale
+  const scaledOffsetY = viewportBox.value.offsetY * viewportBox.value.scale
+  const startX = viewportBox.value.fixedX - scaledOffsetX
+  const startY = viewportBox.value.fixedY - scaledOffsetY
+  
+  // 设置预览样式
+  ctx.globalAlpha = 0.5 // 半透明效果
+  
+  // 处理直线工具预览
+  if (currentTool.value === 'line' && linePreviewCells.value.length > 0) {
+    // 绘制直线预览
+    ctx.fillStyle = brushColor.value
+    
+    linePreviewCells.value.forEach(cell => {
+      const cellX = startX + cell.col * cellWidth
+      const cellY = startY + cell.row * cellHeight
+      
+      // 检查预览格子是否在可见区域内
+      if (
+        cellX + cellWidth >= viewportBox.value.fixedX &&
+        cellX <= viewportBox.value.fixedX + viewportBox.value.width &&
+        cellY + cellHeight >= viewportBox.value.fixedY &&
+        cellY <= viewportBox.value.fixedY + viewportBox.value.height
+      ) {
+        ctx.fillRect(
+          Math.round(Math.max(cellX, viewportBox.value.fixedX)),
+          Math.round(Math.max(cellY, viewportBox.value.fixedY)),
+          Math.round(Math.min(cellWidth, viewportBox.value.fixedX + viewportBox.value.width - cellX)),
+          Math.round(Math.min(cellHeight, viewportBox.value.fixedY + viewportBox.value.height - cellY))
+        )
+      }
+    })
+    
+    // 如果有起点，用不同颜色标记起点
+    if (lineStartCell.value) {
+      const startCellX = startX + lineStartCell.value.col * cellWidth
+      const startCellY = startY + lineStartCell.value.row * cellHeight
+      
+      if (
+        startCellX + cellWidth >= viewportBox.value.fixedX &&
+        startCellX <= viewportBox.value.fixedX + viewportBox.value.width &&
+        startCellY + cellHeight >= viewportBox.value.fixedY &&
+        startCellY <= viewportBox.value.fixedY + viewportBox.value.height
+      ) {
+        ctx.globalAlpha = 0.8
+        ctx.fillStyle = '#00ff00' // 绿色标记起点
+        ctx.fillRect(
+          Math.round(Math.max(startCellX, viewportBox.value.fixedX)),
+          Math.round(Math.max(startCellY, viewportBox.value.fixedY)),
+          Math.round(Math.min(cellWidth, viewportBox.value.fixedX + viewportBox.value.width - startCellX)),
+          Math.round(Math.min(cellHeight, viewportBox.value.fixedY + viewportBox.value.height - startCellY))
+        )
+        ctx.globalAlpha = 0.5 // 恢复透明度
+      }
+    }
+  } else if (previewCell.value && (currentTool.value === 'brush' || currentTool.value === 'eraser' || currentTool.value === 'line')) {
+    // 处理其他工具的预览
+    const size = brushSize.value
+    const halfSize = Math.floor(size / 2)
+    const centerCol = previewCell.value.col
+    const centerRow = previewCell.value.row
+    
+    // 遍历画笔粗细范围内的所有格子
+    for (let col = centerCol - halfSize; col <= centerCol + halfSize; col++) {
+      for (let row = centerRow - halfSize; row <= centerRow + halfSize; row++) {
+        // 检查格子是否在画布范围内
+        if (col >= 0 && col < canvasConfig.value.gridCols && 
+            row >= 0 && row < canvasConfig.value.gridRows) {
+          
+          const cellX = startX + col * cellWidth
+          const cellY = startY + row * cellHeight
+          
+          // 检查预览格子是否在可见区域内
+          if (
+            cellX + cellWidth >= viewportBox.value.fixedX &&
+            cellX <= viewportBox.value.fixedX + viewportBox.value.width &&
+            cellY + cellHeight >= viewportBox.value.fixedY &&
+            cellY <= viewportBox.value.fixedY + viewportBox.value.height
+          ) {
+            if (currentTool.value === 'brush' || currentTool.value === 'line') {
+              // 画笔或直线预览：显示即将绘制的颜色
+              ctx.fillStyle = brushColor.value
+              ctx.fillRect(
+                Math.round(Math.max(cellX, viewportBox.value.fixedX)),
+                Math.round(Math.max(cellY, viewportBox.value.fixedY)),
+                Math.round(Math.min(cellWidth, viewportBox.value.fixedX + viewportBox.value.width - cellX)),
+                Math.round(Math.min(cellHeight, viewportBox.value.fixedY + viewportBox.value.height - cellY))
+              )
+            } else if (currentTool.value === 'eraser') {
+              // 橡皮擦预览：显示删除效果（用浅灰色表示）
+              ctx.fillStyle = '#cccccc'
+              ctx.fillRect(
+                Math.round(Math.max(cellX, viewportBox.value.fixedX)),
+                Math.round(Math.max(cellY, viewportBox.value.fixedY)),
+                Math.round(Math.min(cellWidth, viewportBox.value.fixedX + viewportBox.value.width - cellX)),
+                Math.round(Math.min(cellHeight, viewportBox.value.fixedY + viewportBox.value.height - cellY))
+              )
+              
+              // 为中心格子添加删除标记（X）
+              if (col === centerCol && row === centerRow) {
+                ctx.globalAlpha = 0.8
+                ctx.strokeStyle = '#666666'
+                ctx.lineWidth = Math.max(1, cellWidth * 0.05)
+                ctx.beginPath()
+                const margin = cellWidth * 0.2
+                ctx.moveTo(cellX + margin, cellY + margin)
+                ctx.lineTo(cellX + cellWidth - margin, cellY + cellHeight - margin)
+                ctx.moveTo(cellX + cellWidth - margin, cellY + margin)
+                ctx.lineTo(cellX + margin, cellY + cellHeight - margin)
+                ctx.stroke()
+                ctx.globalAlpha = 0.5 // 恢复透明度
+              }
+            }
+          }
+        }
+      }
+    }
+  } else if (currentTool.value === 'select') {
+    // 处理矩形选择工具的预览
+    if (previewCell.value) {
+      // 显示当前格子预览
+      const cellX = startX + previewCell.value.col * cellWidth
+      const cellY = startY + previewCell.value.row * cellHeight
+      
+      if (
+        cellX + cellWidth >= viewportBox.value.fixedX &&
+        cellX <= viewportBox.value.fixedX + viewportBox.value.width &&
+        cellY + cellHeight >= viewportBox.value.fixedY &&
+        cellY <= viewportBox.value.fixedY + viewportBox.value.height
+      ) {
+        ctx.fillStyle = '#0066ff'
+        ctx.fillRect(
+          Math.round(Math.max(cellX, viewportBox.value.fixedX)),
+          Math.round(Math.max(cellY, viewportBox.value.fixedY)),
+          Math.round(Math.min(cellWidth, viewportBox.value.fixedX + viewportBox.value.width - cellX)),
+          Math.round(Math.min(cellHeight, viewportBox.value.fixedY + viewportBox.value.height - cellY))
+        )
+      }
+    }
+    
+    // 绘制选择框
+    if (isSelecting.value && selectionStart.value && selectionEnd.value) {
+      const startCol = Math.min(selectionStart.value.col, selectionEnd.value.col)
+      const endCol = Math.max(selectionStart.value.col, selectionEnd.value.col)
+      const startRow = Math.min(selectionStart.value.row, selectionEnd.value.row)
+      const endRow = Math.max(selectionStart.value.row, selectionEnd.value.row)
+      
+      const selectionX = startX + startCol * cellWidth
+      const selectionY = startY + startRow * cellHeight
+      const selectionWidth = (endCol - startCol + 1) * cellWidth
+      const selectionHeight = (endRow - startRow + 1) * cellHeight
+      
+      // 绘制选择框边框
+      ctx.globalAlpha = 1.0
+      ctx.strokeStyle = '#0066ff'
+      ctx.lineWidth = 2
+      ctx.setLineDash([5, 5])
+      ctx.strokeRect(selectionX, selectionY, selectionWidth, selectionHeight)
+      
+      // 绘制选择区域的半透明覆盖
+      ctx.globalAlpha = 0.2
+      ctx.fillStyle = '#0066ff'
+      ctx.fillRect(selectionX, selectionY, selectionWidth, selectionHeight)
+    } else if (selectedArea.value) {
+      // 绘制已选择的区域
+      const selectionX = startX + selectedArea.value.startCol * cellWidth
+      const selectionY = startY + selectedArea.value.startRow * cellHeight
+      const selectionWidth = selectedArea.value.width * cellWidth
+      const selectionHeight = selectedArea.value.height * cellHeight
+      
+      // 绘制选择框边框
+      ctx.globalAlpha = 1.0
+      ctx.strokeStyle = '#00aa00'
+      ctx.lineWidth = 2
+      ctx.setLineDash([3, 3])
+      ctx.strokeRect(selectionX, selectionY, selectionWidth, selectionHeight)
+      
+      // 绘制选择区域的半透明覆盖
+      ctx.globalAlpha = 0.15
+      ctx.fillStyle = '#00aa00'
+      ctx.fillRect(selectionX, selectionY, selectionWidth, selectionHeight)
+    }
+  }
+
+  // 恢复状态
   ctx.restore()
 }
 
@@ -884,6 +1232,23 @@ const initCanvas = () => {
     ctx.scale(devicePixelRatio, devicePixelRatio)
   }
 
+  // 初始化预览层画布
+  const previewCtx = previewLayerRef.value?.getContext('2d')
+  if (previewCtx) {
+    const previewCanvas = previewLayerRef.value
+
+    // 设置实际画布尺寸
+    previewCanvas.width = calculatedWidth.value * devicePixelRatio
+    previewCanvas.height = calculatedHeight.value * devicePixelRatio
+
+    // 设置显示尺寸
+    previewCanvas.style.width = calculatedWidth.value + 'px'
+    previewCanvas.style.height = calculatedHeight.value + 'px'
+
+    // 缩放上下文以匹配设备像素比
+    previewCtx.scale(devicePixelRatio, devicePixelRatio)
+  }
+
   // 初始化网格画布
   const gridCtx = gridCanvasRef.value.getContext('2d')
   if (gridCtx) {
@@ -1000,20 +1365,82 @@ const drawLineBetweenCells = (fromCol: number, fromRow: number, toCol: number, t
   return cells
 }
 
+// 计算直线预览格子（使用Bresenham算法）
+const calculateLinePreview = (startCol: number, startRow: number, endCol: number, endRow: number) => {
+  const cells: { col: number; row: number }[] = []
+  
+  let x0 = startCol
+  let y0 = startRow
+  const x1 = endCol
+  const y1 = endRow
+
+  const dx = Math.abs(x1 - x0)
+  const dy = Math.abs(y1 - y0)
+  const sx = x0 < x1 ? 1 : -1
+  const sy = y0 < y1 ? 1 : -1
+  let err = dx - dy
+
+  while (true) {
+    // 为每个线上的点添加粗细效果
+    for (let offsetRow = 0; offsetRow < brushSize.value; offsetRow++) {
+      for (let offsetCol = 0; offsetCol < brushSize.value; offsetCol++) {
+        const newCol = x0 + offsetCol
+        const newRow = y0 + offsetRow
+        
+        // 检查边界
+        if (
+          newCol >= 0 &&
+          newCol < canvasConfig.value.gridCols &&
+          newRow >= 0 &&
+          newRow < canvasConfig.value.gridRows
+        ) {
+          cells.push({ col: newCol, row: newRow })
+        }
+      }
+    }
+
+    if (x0 === x1 && y0 === y1) break
+
+    const e2 = 2 * err
+    if (e2 > -dy) {
+      err -= dy
+      x0 += sx
+    }
+    if (e2 < dx) {
+      err += dx
+      y0 += sy
+    }
+  }
+
+  return cells
+}
+
+// 绘制直线
+const drawLine = (startCol: number, startRow: number, endCol: number, endRow: number) => {
+  const lineCells = calculateLinePreview(startCol, startRow, endCol, endRow)
+  
+  // 保存当前状态到历史记录
+  saveToHistory()
+  
+  // 绘制直线上的所有格子
+  lineCells.forEach(cell => {
+    const cellKey = `${cell.col},${cell.row}`
+    drawnCells.value.set(cellKey, brushColor.value)
+  })
+  
+  // 重新绘制画布
+  drawCanvas()
+}
+
 // 连贯绘制格子（处理画笔连贯性）
 const paintCellWithContinuity = (col: number, row: number) => {
   if (lastDrawnCell.value && (currentTool.value === 'brush' || currentTool.value === 'eraser')) {
     // 如果有上一个绘制位置，使用插值算法连接两个点
     const cells = drawLineBetweenCells(lastDrawnCell.value.col, lastDrawnCell.value.row, col, row)
 
-    // 绘制所有插值格子
+    // 绘制所有插值格子，支持画笔粗细
     for (const cell of cells) {
-      const cellKey = `${cell.col},${cell.row}`
-      if (currentTool.value === 'brush') {
-        drawnCells.value.set(cellKey, brushColor.value)
-      } else if (currentTool.value === 'eraser') {
-        drawnCells.value.delete(cellKey)
-      }
+      paintCellsWithBrushSize(cell.col, cell.row, currentTool.value === 'eraser')
     }
 
     drawCanvas()
@@ -1030,16 +1457,12 @@ const paintCellWithContinuity = (col: number, row: number) => {
 
 // 绘制或擦除格子
 const paintCell = (col: number, row: number) => {
-  const cellKey = `${col},${row}`
-
   if (currentTool.value === 'eraser') {
-    // 橡皮擦工具：只擦除格子
-    if (drawnCells.value.has(cellKey)) {
-      drawnCells.value.delete(cellKey)
-    }
+    // 橡皮擦工具：根据画笔粗细擦除格子
+    paintCellsWithBrushSize(col, row, true)
   } else if (currentTool.value === 'brush') {
-    // 画笔工具：绘制格子
-    drawnCells.value.set(cellKey, brushColor.value)
+    // 画笔工具：根据画笔粗细绘制格子
+    paintCellsWithBrushSize(col, row, false)
   } else if (currentTool.value === 'bucket') {
     // 油桶填充工具：洪水填充
     floodFill(col, row, brushColor.value)
@@ -1047,6 +1470,39 @@ const paintCell = (col: number, row: number) => {
 
   // 重新绘制画布
   drawCanvas()
+}
+
+// 根据画笔粗细绘制或擦除格子
+const paintCellsWithBrushSize = (centerCol: number, centerRow: number, isEraser: boolean) => {
+  const size = brushSize.value
+  const halfSize = Math.floor(size / 2)
+  
+  // 计算绘制区域的起始和结束位置
+  const startCol = centerCol - halfSize
+  const endCol = centerCol + halfSize
+  const startRow = centerRow - halfSize
+  const endRow = centerRow + halfSize
+  
+  // 遍历绘制区域内的所有格子
+  for (let col = startCol; col <= endCol; col++) {
+    for (let row = startRow; row <= endRow; row++) {
+      // 检查格子是否在画布范围内
+      if (col >= 0 && col < canvasConfig.value.gridCols && 
+          row >= 0 && row < canvasConfig.value.gridRows) {
+        const cellKey = `${col},${row}`
+        
+        if (isEraser) {
+          // 擦除格子
+          if (drawnCells.value.has(cellKey)) {
+            drawnCells.value.delete(cellKey)
+          }
+        } else {
+          // 绘制格子
+          drawnCells.value.set(cellKey, brushColor.value)
+        }
+      }
+    }
+  }
 }
 
 // 洪水填充算法
@@ -1161,6 +1617,39 @@ const startDrawing = (e: MouseEvent) => {
         if (gridCoords) {
           paintCell(gridCoords.col, gridCoords.row)
         }
+      } else if (currentTool.value === 'line') {
+        // 直线工具：开始绘制直线
+        const gridCoords = getGridCoordinates(mouseX, mouseY)
+        if (gridCoords) {
+          if (!isDrawingLine.value) {
+            // 第一次点击：设置起点
+            lineStartCell.value = { col: gridCoords.col, row: gridCoords.row }
+            lineEndCell.value = null
+            isDrawingLine.value = true
+            linePreviewCells.value = []
+          } else {
+            // 第二次点击：设置终点并绘制直线
+            lineEndCell.value = { col: gridCoords.col, row: gridCoords.row }
+            if (lineStartCell.value) {
+              drawLine(lineStartCell.value.col, lineStartCell.value.row, gridCoords.col, gridCoords.row)
+            }
+            // 重置直线状态
+            lineStartCell.value = null
+            lineEndCell.value = null
+            isDrawingLine.value = false
+            linePreviewCells.value = []
+          }
+        }
+      } else if (currentTool.value === 'select') {
+        // 矩形选择工具：开始选择
+        const gridCoords = getGridCoordinates(mouseX, mouseY)
+        if (gridCoords) {
+          isSelecting.value = true
+          selectionStart.value = { col: gridCoords.col, row: gridCoords.row }
+          selectionEnd.value = { col: gridCoords.col, row: gridCoords.row }
+          selectedArea.value = null
+          selectedImageData.value = null
+        }
       }
     } else {
       // 点击在视窗框外的区域
@@ -1217,6 +1706,14 @@ const draw = (e: MouseEvent) => {
       // 使用连贯绘制函数确保快速移动时不跳过格子
       paintCellWithContinuity(gridCoords.col, gridCoords.row)
     }
+  } else if (isSelecting.value && currentTool.value === 'select' && isPointInViewportBox(currentX, currentY)) {
+    // 矩形选择工具：更新选择区域
+    const gridCoords = getGridCoordinates(currentX, currentY)
+    if (gridCoords && selectionStart.value) {
+      selectionEnd.value = { col: gridCoords.col, row: gridCoords.row }
+      // 重绘预览层以显示选择框
+      drawPreviewLayer()
+    }
   }
   // 注意：油桶填充工具不支持拖拽操作，只在点击时执行填充
   else if (isDrawing.value && currentTool.value === 'move' && canvasRef.value) {
@@ -1241,6 +1738,50 @@ const draw = (e: MouseEvent) => {
     // 更新缩略图
     updateThumbnail()
   }
+
+  // 更新预览层（当鼠标在视窗框内移动时）
+  if (isPointInViewportBox(currentX, currentY) && !isDrawing.value && !viewportBox.value.isDragging) {
+    const gridCoords = getGridCoordinates(currentX, currentY)
+    if (gridCoords && (currentTool.value === 'brush' || currentTool.value === 'eraser')) {
+      // 更新预览格子位置
+      previewCell.value = { col: gridCoords.col, row: gridCoords.row }
+      // 重绘预览层
+      drawPreviewLayer()
+    } else if (gridCoords && currentTool.value === 'line') {
+      // 直线工具预览
+      if (isDrawingLine.value && lineStartCell.value) {
+        // 正在绘制直线，显示从起点到当前位置的预览
+        linePreviewCells.value = calculateLinePreview(
+          lineStartCell.value.col,
+          lineStartCell.value.row,
+          gridCoords.col,
+          gridCoords.row
+        )
+      } else {
+        // 还未开始绘制直线，只显示当前格子预览
+        previewCell.value = { col: gridCoords.col, row: gridCoords.row }
+        linePreviewCells.value = []
+      }
+      drawPreviewLayer()
+    } else if (gridCoords && currentTool.value === 'select') {
+      // 矩形选择工具预览
+      if (!isSelecting.value) {
+        // 还未开始选择，只显示当前格子预览
+        previewCell.value = { col: gridCoords.col, row: gridCoords.row }
+      }
+      drawPreviewLayer()
+    } else {
+      // 清除预览
+      previewCell.value = null
+      linePreviewCells.value = []
+      drawPreviewLayer()
+    }
+  } else if (!isPointInViewportBox(currentX, currentY)) {
+    // 鼠标移出视窗框，清除预览
+    previewCell.value = null
+    linePreviewCells.value = []
+    drawPreviewLayer()
+  }
 }
 
 // 停止绘制或拖拽
@@ -1255,6 +1796,47 @@ const stopDrawing = () => {
 
   // 重置上一个绘制位置（结束绘制操作）
   lastDrawnCell.value = null
+
+  // 处理矩形选择完成
+  if (isSelecting.value && currentTool.value === 'select') {
+    isSelecting.value = false
+    // 计算选择区域并提取图像数据
+    if (selectionStart.value && selectionEnd.value) {
+      const startCol = Math.min(selectionStart.value.col, selectionEnd.value.col)
+      const endCol = Math.max(selectionStart.value.col, selectionEnd.value.col)
+      const startRow = Math.min(selectionStart.value.row, selectionEnd.value.row)
+      const endRow = Math.max(selectionStart.value.row, selectionEnd.value.row)
+      
+      selectedArea.value = {
+        startCol,
+        startRow,
+        endCol,
+        endRow,
+        width: endCol - startCol + 1,
+        height: endRow - startRow + 1
+      }
+      
+      // 提取选择区域的图像数据
+      const imageData = new Map()
+      for (let row = startRow; row <= endRow; row++) {
+        for (let col = startCol; col <= endCol; col++) {
+          const cellKey = `${col},${row}`
+          if (drawnCells.value.has(cellKey)) {
+            imageData.set(cellKey, drawnCells.value.get(cellKey)!)
+          }
+        }
+      }
+      selectedImageData.value = imageData
+    }
+  }
+
+  // 清除预览层（但保持直线工具和矩形选择的状态）
+  if ((currentTool.value !== 'line' || !isDrawingLine.value) && 
+      (currentTool.value !== 'select' || !selectedArea.value)) {
+    previewCell.value = null
+    linePreviewCells.value = []
+  }
+  drawPreviewLayer()
 }
 
 // 处理滚轮缩放
@@ -1420,6 +2002,105 @@ const renderFullCanvas = () => {
   })
 }
 
+// 矩形选择工具的操作函数
+const copySelectedArea = () => {
+  if (selectedImageData.value) {
+    copiedImageData.value = new Map(selectedImageData.value)
+    console.log('已复制选择区域')
+  }
+}
+
+const cutSelectedArea = () => {
+  if (selectedImageData.value && selectedArea.value) {
+    // 先复制
+    copiedImageData.value = new Map(selectedImageData.value)
+    
+    // 然后删除原区域
+    deleteSelectedArea()
+    console.log('已剪切选择区域')
+  }
+}
+
+const deleteSelectedArea = () => {
+  if (selectedArea.value) {
+    const { startCol, startRow, width, height } = selectedArea.value
+    
+    // 删除选择区域内的所有格子
+    for (let row = startRow; row < startRow + height; row++) {
+      for (let col = startCol; col < startCol + width; col++) {
+        const cellKey = `${col},${row}`
+        drawnCells.value.delete(cellKey)
+      }
+    }
+    
+    // 保存到历史记录
+    saveToHistory()
+    
+    // 重新绘制画布
+    drawCanvas()
+    
+    console.log('已删除选择区域')
+  }
+}
+
+const exportSelectedArea = () => {
+  if (!selectedArea.value || !selectedImageData.value) return
+  
+  const { width, height } = selectedArea.value
+  
+  // 创建临时画布
+  const tempCanvas = document.createElement('canvas')
+  const tempCtx = tempCanvas.getContext('2d')
+  if (!tempCtx) return
+  
+  // 设置画布尺寸
+  const cellWidth = gridCellWidth.value
+  const cellHeight = gridCellHeight.value
+  tempCanvas.width = width * cellWidth
+  tempCanvas.height = height * cellHeight
+  
+  // 禁用图像平滑
+  tempCtx.imageSmoothingEnabled = false
+  
+  // 填充白色背景
+  tempCtx.fillStyle = '#ffffff'
+  tempCtx.fillRect(0, 0, tempCanvas.width, tempCanvas.height)
+  
+  // 绘制选择区域的内容
+  selectedImageData.value.forEach((color, cellKey) => {
+    const [col, row] = cellKey.split(',').map(Number)
+    const relativeCol = col - selectedArea.value!.startCol
+    const relativeRow = row - selectedArea.value!.startRow
+    
+    const x = relativeCol * cellWidth
+    const y = relativeRow * cellHeight
+    
+    tempCtx.fillStyle = color
+    tempCtx.fillRect(x, y, cellWidth, cellHeight)
+  })
+  
+  // 下载图片
+  const link = document.createElement('a')
+  link.download = `selection_${width}x${height}.png`
+  link.href = tempCanvas.toDataURL()
+  link.click()
+  
+  console.log('已导出选择区域')
+}
+
+const clearSelection = () => {
+  selectedArea.value = null
+  selectedImageData.value = null
+  selectionStart.value = null
+  selectionEnd.value = null
+  isSelecting.value = false
+  
+  // 重新绘制预览层
+  drawPreviewLayer()
+  
+  console.log('已清除选择')
+}
+
 // 下载完整画布图片
 const downloadFullImage = () => {
   // 创建一个临时画布用于生成原始尺寸的图片
@@ -1559,7 +2240,6 @@ const showCanvasColors = () => {
   canvasColors.value = colors
 
   if (colors.length === 0) {
-    alert('画布中没有检测到颜色，请先绘制一些内容或加载背景图片。')
     return
   }
 
@@ -1567,9 +2247,6 @@ const showCanvasColors = () => {
   console.log('画布颜色数组:', colors)
   console.log('颜色数量:', colors.length)
   console.log('已绘制格子数量:', drawnCells.value.size)
-
-  // 显示成功提示
-  alert(`成功获取到 ${colors.length} 种颜色，已在页面上显示！`)
 }
 
 // 键盘事件处理
@@ -1684,13 +2361,57 @@ onUnmounted(() => {
   height: 100%;
 }
 
-.toolbar {
+// 浮动工具栏样式
+.floating-toolbar {
+  position: fixed;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 1000;
   background: white;
-  padding: 1rem;
-  border-bottom: 1px solid #ddd;
-  display: flex;
-  align-items: center;
-  gap: 1rem;
+  border-radius: 0 12px 12px 0;
+  box-shadow: 2px 0 20px rgba(0, 0, 0, 0.15);
+  transition: all 0.3s ease;
+  max-height: 90vh;
+  overflow-y: auto;
+  min-width: 60px;
+  
+  &.toolbar-hidden {
+    transform: translateY(-50%) translateX(-90%);
+  }
+  
+  .toolbar-toggle {
+    position: absolute;
+    right: -30px;
+    top: 20px;
+    width: 30px;
+    height: 40px;
+    background: white;
+    border: none;
+    border-radius: 0 8px 8px 0;
+    box-shadow: 2px 0 10px rgba(0, 0, 0, 0.1);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 14px;
+    color: #666;
+    transition: all 0.2s ease;
+    z-index: 1001;
+    
+    &:hover {
+      background: #f8f9fa;
+      color: #333;
+    }
+  }
+  
+  .toolbar-content {
+    padding: 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    min-width: 280px;
+    max-width: 350px;
 
   .reset-btn {
     padding: 0.5rem 1rem;
@@ -1745,9 +2466,9 @@ onUnmounted(() => {
 
   .tool-section {
     display: flex;
-    align-items: center;
+    flex-direction: column;
     gap: 0.5rem;
-    margin-left: 1rem;
+    margin-left: 0;
   }
 
   .tool-btn {
@@ -1779,14 +2500,16 @@ onUnmounted(() => {
 
   .brush-settings,
   .eraser-settings,
-  .bucket-settings {
+  .bucket-settings,
+  .line-settings,
+  .select-settings {
     display: flex;
-    align-items: center;
+    flex-direction: column;
     gap: 0.5rem;
-    margin-left: 1rem;
-    padding: 0.5rem;
+    margin-left: 0;
+    padding: 0.75rem;
     background-color: #f8f9fa;
-    border-radius: 4px;
+    border-radius: 6px;
     border: 1px solid #dee2e6;
 
     label {
@@ -1804,6 +2527,68 @@ onUnmounted(() => {
       padding: 0;
     }
 
+    .brush-size-control {
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+      margin-left: 0;
+      
+      label {
+        font-size: 0.8rem;
+        color: #495057;
+        margin: 0;
+        white-space: nowrap;
+      }
+      
+      .brush-size-slider {
+        width: 80px;
+        height: 20px;
+        background: #ddd;
+        border-radius: 10px;
+        outline: none;
+        cursor: pointer;
+        
+        &::-webkit-slider-thumb {
+          appearance: none;
+          width: 16px;
+          height: 16px;
+          background: #007bff;
+          border-radius: 50%;
+          cursor: pointer;
+          transition: background-color 0.2s;
+          
+          &:hover {
+            background: #0056b3;
+          }
+        }
+        
+        &::-moz-range-thumb {
+          width: 16px;
+          height: 16px;
+          background: #007bff;
+          border-radius: 50%;
+          cursor: pointer;
+          border: none;
+          transition: background-color 0.2s;
+          
+          &:hover {
+            background: #0056b3;
+          }
+        }
+      }
+      
+      .brush-size-display {
+        font-size: 0.8rem;
+        color: #495057;
+        font-weight: 600;
+        min-width: 35px;
+        text-align: center;
+        background: #e9ecef;
+        padding: 2px 6px;
+        border-radius: 3px;
+      }
+    }
+
     .clear-btn {
       padding: 0.25rem 0.75rem;
       background-color: #dc3545;
@@ -1818,16 +2603,48 @@ onUnmounted(() => {
         background-color: #c82333;
       }
     }
+    
+    .action-btn {
+      padding: 0.5rem 1rem;
+      background-color: #007bff;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 0.9rem;
+      transition: background-color 0.2s;
+      width: 100%;
+
+      &:hover {
+        background-color: #0056b3;
+      }
+    }
+    
+    .selection-actions {
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+    }
+    
+    .selection-info {
+      font-size: 0.8rem;
+      color: #666;
+      margin-bottom: 0.5rem;
+      
+      p {
+        margin: 0.25rem 0;
+      }
+    }
   }
 
   .history-controls {
     display: flex;
-    align-items: center;
+    flex-direction: column;
     gap: 0.5rem;
-    margin-left: 1rem;
-    padding: 0.5rem;
+    margin-left: 0;
+    padding: 0.75rem;
     background-color: #f8f9fa;
-    border-radius: 4px;
+    border-radius: 6px;
     border: 1px solid #dee2e6;
 
     .history-btn {
@@ -1870,12 +2687,11 @@ onUnmounted(() => {
   }
 
   .grid-settings {
-    margin-left: 1rem;
+    margin-left: 0;
     padding: 0.75rem;
     background-color: #f8f9fa;
-    border-radius: 4px;
+    border-radius: 6px;
     border: 1px solid #dee2e6;
-    margin-top: 0.5rem;
 
     h4 {
       margin: 0 0 0.5rem 0;
@@ -1886,15 +2702,15 @@ onUnmounted(() => {
 
     .grid-controls {
       display: flex;
-      align-items: center;
-      gap: 0.75rem;
-      flex-wrap: wrap;
+      flex-direction: column;
+      gap: 0.5rem;
     }
 
     .grid-input-group {
       display: flex;
       align-items: center;
-      gap: 0.25rem;
+      gap: 0.5rem;
+      justify-content: space-between;
 
       label {
         font-size: 0.8rem;
@@ -1949,8 +2765,14 @@ onUnmounted(() => {
       }
     }
   }
+}
 
-  .colors-panel {
+.canvas-wrapper {
+  margin-left: 0;
+  transition: margin-left 0.3s ease;
+}
+
+.colors-panel {
     margin-top: 1rem;
     padding: 1rem;
     background-color: #f8f9fa;
@@ -2065,6 +2887,14 @@ onUnmounted(() => {
   left: 0;
   pointer-events: none;
   z-index: 0;
+}
+
+.preview-layer-canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  pointer-events: none;
+  z-index: 1;
 }
 
 .thumbnail-container {
