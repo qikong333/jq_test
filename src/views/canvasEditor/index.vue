@@ -207,7 +207,12 @@
             <div class="background-controls">
               <div class="background-color-group">
                 <label>背景颜色:</label>
-                <input type="color" v-model="backgroundColor" class="color-picker" @change="drawCanvas" />
+                <input
+                  type="color"
+                  v-model="backgroundColor"
+                  class="color-picker"
+                  @change="drawCanvas"
+                />
                 <button @click="resetBackgroundColor" class="reset-bg-btn">重置为白色</button>
               </div>
             </div>
@@ -216,13 +221,13 @@
           <!-- 颜色替换工具 -->
           <div class="color-replace-settings">
             <h4>颜色替换工具</h4>
-            
+
             <!-- 背景图片状态提示 -->
             <div class="background-status" v-if="!imageLoaded">
               <p class="warning-text">⚠️ 背景图层功能需要先上传背景图片</p>
               <button @click="triggerFileUpload" class="upload-btn">上传背景图片</button>
             </div>
-            
+
             <div class="color-replace-controls">
               <div class="color-replace-group">
                 <label>旧颜色:</label>
@@ -233,9 +238,11 @@
               <div class="target-layer-group">
                 <label>目标图层:</label>
                 <select v-model="targetLayer" class="layer-select">
-                  <option value="both" :disabled="!imageLoaded">绘制层+背景层{{ !imageLoaded ? ' (需要背景图片)' : '' }}</option>
+                  <option value="both">自动判断 (优先选择可用图层)</option>
                   <option value="drawn">仅绘制层</option>
-                  <option value="background" :disabled="!imageLoaded">仅背景层{{ !imageLoaded ? ' (需要背景图片)' : '' }}</option>
+                  <option value="background" :disabled="!imageLoaded">
+                    仅背景层{{ !imageLoaded ? ' (需要背景图片)' : '' }}
+                  </option>
                 </select>
               </div>
               <div class="color-replace-actions">
@@ -503,7 +510,7 @@ const canvasColors = ref<string[]>([])
 // 颜色替换工具相关变量
 const oldColorToReplace = ref('#ff0000') // 要替换的旧颜色
 const newColorToReplace = ref('#00ff00') // 替换后的新颜色
-const targetLayer = ref<'drawn' | 'background' | 'both'>('drawn') // 目标图层，默认选择绘制层
+const targetLayer = ref<'drawn' | 'background' | 'both'>('both') // 目标图层，默认选择绘制层+背景层
 
 // 视窗框状态 - 固定在左上角，通过偏移量控制背景移动
 const viewportBox = ref({
@@ -663,10 +670,10 @@ const hexToRgba = (hex: string) => {
 // 替换绘制层中的特定颜色
 const replaceDrawnColor = (oldColor: string, newColor: string) => {
   let replacedCount = 0
-  
+
   // 遍历所有已绘制的格子
   const newDrawnCells = new Map()
-  
+
   drawnCells.value.forEach((color, cellKey) => {
     if (color.toLowerCase() === oldColor.toLowerCase()) {
       newDrawnCells.set(cellKey, newColor)
@@ -675,14 +682,14 @@ const replaceDrawnColor = (oldColor: string, newColor: string) => {
       newDrawnCells.set(cellKey, color)
     }
   })
-  
+
   // 更新绘制的格子
   drawnCells.value = newDrawnCells
-  
+
   // 保存到历史记录并重新绘制
   saveToHistory()
   drawCanvas()
-  
+
   console.log(`绘制层颜色替换完成，共替换 ${replacedCount} 个格子`)
   return replacedCount
 }
@@ -692,39 +699,38 @@ const replaceBackgroundColor = (oldColor: string, newColor: string) => {
   console.log('背景图片状态检查:', {
     backgroundImage: !!backgroundImage.value,
     imageLoaded: imageLoaded.value,
-    backgroundImageSrc: backgroundImage.value?.src
+    backgroundImageSrc: backgroundImage.value?.src,
   })
-  
+
   if (!backgroundImage.value || !imageLoaded.value) {
     console.warn('没有背景图片，无法替换背景颜色')
-    alert('没有背景图片，无法替换背景颜色！请先上传背景图片。')
     return 0
   }
-  
+
   console.log('开始背景颜色替换:', { oldColor, newColor })
-  
+
   // 创建临时画布来处理背景图片
   const tempCanvas = document.createElement('canvas')
   const tempCtx = tempCanvas.getContext('2d')
   if (!tempCtx) return 0
-  
+
   // 设置临时画布尺寸为背景图片尺寸
   tempCanvas.width = backgroundImage.value.width
   tempCanvas.height = backgroundImage.value.height
-  
+
   console.log('临时画布尺寸:', tempCanvas.width, 'x', tempCanvas.height)
-  
+
   // 绘制背景图片到临时画布
   tempCtx.drawImage(backgroundImage.value, 0, 0)
-  
+
   // 获取图像数据
   const imageData = tempCtx.getImageData(0, 0, tempCanvas.width, tempCanvas.height)
   const data = imageData.data
-  
+
   let replacedPixelsCount = 0
   let totalPixelsChecked = 0
   const colorMatches = new Set() // 记录找到的颜色
-  
+
   // 将旧颜色和新颜色从十六进制转换为RGB
   const oldRgb = hexToRgba(oldColor)
   const newRgb = hexToRgba(newColor)
@@ -732,22 +738,22 @@ const replaceBackgroundColor = (oldColor: string, newColor: string) => {
     console.error('无效的颜色格式:', { oldColor, newColor, oldRgb, newRgb })
     return 0
   }
-  
+
   console.log('颜色转换结果:', { oldRgb, newRgb })
-  
+
   // 遍历每个像素，将指定颜色替换为新颜色
   for (let i = 0; i < data.length; i += 4) {
     const r = data[i]
     const g = data[i + 1]
     const b = data[i + 2]
     const a = data[i + 3]
-    
+
     if (a > 0) {
       totalPixelsChecked++
-      
+
       // 方法1: 直接比较RGB值（更精确）
-      const rgbMatch = (r === oldRgb.r && g === oldRgb.g && b === oldRgb.b)
-      
+      const rgbMatch = r === oldRgb.r && g === oldRgb.g && b === oldRgb.b
+
       // 方法2: 转换为十六进制再比较（原方法）
       const hex =
         '#' +
@@ -755,12 +761,13 @@ const replaceBackgroundColor = (oldColor: string, newColor: string) => {
         ('0' + g.toString(16)).slice(-2) +
         ('0' + b.toString(16)).slice(-2)
       const hexMatch = hex.toLowerCase() === oldColor.toLowerCase()
-      
+
       // 记录找到的颜色（用于调试）
-      if (totalPixelsChecked <= 100) { // 只记录前100个像素的颜色
+      if (totalPixelsChecked <= 100) {
+        // 只记录前100个像素的颜色
         colorMatches.add(hex)
       }
-      
+
       // 如果像素颜色匹配要替换的颜色（使用RGB直接比较）
       if (rgbMatch || hexMatch) {
         // 替换为新颜色
@@ -769,28 +776,29 @@ const replaceBackgroundColor = (oldColor: string, newColor: string) => {
         data[i + 2] = newRgb.b // B
         // alpha值保持不变
         replacedPixelsCount++
-        
-        if (replacedPixelsCount <= 5) { // 记录前5个替换的像素信息
+
+        if (replacedPixelsCount <= 5) {
+          // 记录前5个替换的像素信息
           console.log(`替换像素 ${replacedPixelsCount}:`, {
             原色: { r, g, b, hex },
             新色: { r: newRgb.r, g: newRgb.g, b: newRgb.b },
-            位置: Math.floor(i / 4)
+            位置: Math.floor(i / 4),
           })
         }
       }
     }
   }
-  
+
   console.log('颜色替换统计:', {
     总像素数: Math.floor(data.length / 4),
     检查的像素数: totalPixelsChecked,
     替换的像素数: replacedPixelsCount,
-    找到的颜色样本: Array.from(colorMatches).slice(0, 10) // 显示前10种颜色
+    找到的颜色样本: Array.from(colorMatches).slice(0, 10), // 显示前10种颜色
   })
-  
+
   // 将修改后的图像数据绘制回临时画布
   tempCtx.putImageData(imageData, 0, 0)
-  
+
   // 创建新的图片对象
   const newImg = new Image()
   newImg.onload = () => {
@@ -799,7 +807,7 @@ const replaceBackgroundColor = (oldColor: string, newColor: string) => {
     console.log('背景图片已更新并重新绘制')
   }
   newImg.src = tempCanvas.toDataURL()
-  
+
   console.log(`背景层颜色替换完成，共替换 ${replacedPixelsCount} 个像素`)
   return replacedPixelsCount
 }
@@ -807,10 +815,10 @@ const replaceBackgroundColor = (oldColor: string, newColor: string) => {
 // 删除绘制层中的特定颜色
 const deleteDrawnColor = (colorToDelete: string) => {
   let deletedCount = 0
-  
+
   // 遍历所有已绘制的格子，删除指定颜色
   const newDrawnCells = new Map()
-  
+
   drawnCells.value.forEach((color, cellKey) => {
     if (color.toLowerCase() !== colorToDelete.toLowerCase()) {
       newDrawnCells.set(cellKey, color)
@@ -818,14 +826,14 @@ const deleteDrawnColor = (colorToDelete: string) => {
       deletedCount++
     }
   })
-  
+
   // 更新绘制的格子
   drawnCells.value = newDrawnCells
-  
+
   // 保存到历史记录并重新绘制
   saveToHistory()
   drawCanvas()
-  
+
   console.log(`绘制层颜色删除完成，共删除 ${deletedCount} 个格子`)
   return deletedCount
 }
@@ -835,54 +843,53 @@ const deleteBackgroundColor = (colorToDelete: string) => {
   console.log('背景图片状态检查:', {
     backgroundImage: !!backgroundImage.value,
     imageLoaded: imageLoaded.value,
-    backgroundImageSrc: backgroundImage.value?.src
+    backgroundImageSrc: backgroundImage.value?.src,
   })
-  
+
   if (!backgroundImage.value || !imageLoaded.value) {
     console.warn('没有背景图片，无法删除背景颜色')
-    alert('没有背景图片，无法删除背景颜色！请先上传背景图片。')
     return 0
   }
-  
+
   // 创建临时画布来处理背景图片
   const tempCanvas = document.createElement('canvas')
   const tempCtx = tempCanvas.getContext('2d')
   if (!tempCtx) return 0
-  
+
   // 设置临时画布尺寸为背景图片尺寸
   tempCanvas.width = backgroundImage.value.width
   tempCanvas.height = backgroundImage.value.height
-  
+
   // 绘制背景图片到临时画布
   tempCtx.drawImage(backgroundImage.value, 0, 0)
-  
+
   // 获取图像数据
   const imageData = tempCtx.getImageData(0, 0, tempCanvas.width, tempCanvas.height)
   const data = imageData.data
-  
+
   let deletedPixelsCount = 0
-  
+
   // 将背景颜色从十六进制转换为RGB
   const bgRgb = hexToRgba(backgroundColor.value)
   if (!bgRgb) {
     console.error('无效的背景颜色格式:', backgroundColor.value)
     return 0
   }
-  
+
   // 遍历每个像素，将指定颜色替换为背景颜色
   for (let i = 0; i < data.length; i += 4) {
     const r = data[i]
     const g = data[i + 1]
     const b = data[i + 2]
     const a = data[i + 3]
-    
+
     if (a > 0) {
       const hex =
         '#' +
         ('0' + r.toString(16)).slice(-2) +
         ('0' + g.toString(16)).slice(-2) +
         ('0' + b.toString(16)).slice(-2)
-      
+
       // 如果像素颜色匹配要删除的颜色
       if (hex.toLowerCase() === colorToDelete.toLowerCase()) {
         // 替换为背景颜色
@@ -894,10 +901,10 @@ const deleteBackgroundColor = (colorToDelete: string) => {
       }
     }
   }
-  
+
   // 将修改后的图像数据绘制回临时画布
   tempCtx.putImageData(imageData, 0, 0)
-  
+
   // 创建新的图片对象
   const newImg = new Image()
   newImg.onload = () => {
@@ -905,38 +912,45 @@ const deleteBackgroundColor = (colorToDelete: string) => {
     drawCanvas()
   }
   newImg.src = tempCanvas.toDataURL()
-  
+
   console.log(`背景层颜色删除完成，共删除 ${deletedPixelsCount} 个像素`)
   return deletedPixelsCount
 }
 
 // 综合颜色替换函数（同时处理绘制层和背景层）
-const replaceColor = (oldColor: string, newColor: string, targetLayer: 'drawn' | 'background' | 'both' = 'both') => {
+const replaceColor = (
+  oldColor: string,
+  newColor: string,
+  targetLayer: 'drawn' | 'background' | 'both' = 'both',
+) => {
   let totalReplaced = 0
-  
+
   if (targetLayer === 'drawn' || targetLayer === 'both') {
     totalReplaced += replaceDrawnColor(oldColor, newColor)
   }
-  
+
   if (targetLayer === 'background' || targetLayer === 'both') {
     totalReplaced += replaceBackgroundColor(oldColor, newColor)
   }
-  
+
   return totalReplaced
 }
 
 // 综合颜色删除函数（同时处理绘制层和背景层）
-const deleteColor = (colorToDelete: string, targetLayer: 'drawn' | 'background' | 'both' = 'both') => {
+const deleteColor = (
+  colorToDelete: string,
+  targetLayer: 'drawn' | 'background' | 'both' = 'both',
+) => {
   let totalDeleted = 0
-  
+
   if (targetLayer === 'drawn' || targetLayer === 'both') {
     totalDeleted += deleteDrawnColor(colorToDelete)
   }
-  
+
   if (targetLayer === 'background' || targetLayer === 'both') {
     totalDeleted += deleteBackgroundColor(colorToDelete)
   }
-  
+
   return totalDeleted
 }
 
@@ -944,15 +958,46 @@ const deleteColor = (colorToDelete: string, targetLayer: 'drawn' | 'background' 
 const performColorReplace = () => {
   const oldColor = oldColorToReplace.value
   const newColor = newColorToReplace.value
-  const layer = targetLayer.value
-  
+  let layer = targetLayer.value
+
   if (oldColor === newColor) {
-    alert('旧颜色和新颜色不能相同！')
     return
   }
-  
+
+  // 自动判断目标图层
+  const hasDrawnLayer = drawnCells.value.size > 0
+  const hasBackgroundLayer = backgroundImage.value && imageLoaded.value
+
+  console.log('自动判断目标图层:', {
+    hasDrawnLayer,
+    hasBackgroundLayer,
+    drawnCellsSize: drawnCells.value.size,
+    imageLoaded: imageLoaded.value,
+  })
+
+  // 根据实际情况自动选择目标图层
+  if (layer === 'both') {
+    if (hasDrawnLayer && hasBackgroundLayer) {
+      // 两个图层都有数据，保持both不变
+      layer = 'both'
+    } else if (hasDrawnLayer && !hasBackgroundLayer) {
+      // 只有绘制层有数据
+      layer = 'drawn'
+    } else if (!hasDrawnLayer && hasBackgroundLayer) {
+      // 只有背景层有数据
+      layer = 'background'
+    } else {
+      // 两个图层都没有数据
+      return
+    }
+  } else if (layer === 'background' && !hasBackgroundLayer) {
+    return
+  } else if (layer === 'drawn' && !hasDrawnLayer) {
+    return
+  }
+
   const replacedCount = replaceColor(oldColor, newColor, layer)
-  
+
   let layerText = ''
   switch (layer) {
     case 'drawn':
@@ -965,22 +1010,55 @@ const performColorReplace = () => {
       layerText = '绘制层和背景层'
       break
   }
-  
-  alert(`颜色替换完成！\n在${layerText}中共替换了 ${replacedCount} 个元素\n${oldColor} → ${newColor}`)
+
+  // 显示替换结果提示
+  alert(`颜色替换完成，共替换 ${replacedCount} 个元素（${layerText}）`)
 }
 
 // UI操作函数：执行颜色删除
 const performColorDelete = () => {
   const colorToDelete = oldColorToReplace.value
-  const layer = targetLayer.value
-  
+  let layer = targetLayer.value
+
   const confirmed = confirm(`确定要删除颜色 ${colorToDelete} 吗？\n此操作不可撤销！`)
   if (!confirmed) {
     return
   }
-  
+
+  // 自动判断目标图层
+  const hasDrawnLayer = drawnCells.value.size > 0
+  const hasBackgroundLayer = backgroundImage.value && imageLoaded.value
+
+  console.log('自动判断目标图层:', {
+    hasDrawnLayer,
+    hasBackgroundLayer,
+    drawnCellsSize: drawnCells.value.size,
+    imageLoaded: imageLoaded.value,
+  })
+
+  // 根据实际情况自动选择目标图层
+  if (layer === 'both') {
+    if (hasDrawnLayer && hasBackgroundLayer) {
+      // 两个图层都有数据，保持both不变
+      layer = 'both'
+    } else if (hasDrawnLayer && !hasBackgroundLayer) {
+      // 只有绘制层有数据
+      layer = 'drawn'
+    } else if (!hasDrawnLayer && hasBackgroundLayer) {
+      // 只有背景层有数据
+      layer = 'background'
+    } else {
+      // 两个图层都没有数据
+      return
+    }
+  } else if (layer === 'background' && !hasBackgroundLayer) {
+    return
+  } else if (layer === 'drawn' && !hasDrawnLayer) {
+    return
+  }
+
   const deletedCount = deleteColor(colorToDelete, layer)
-  
+
   let layerText = ''
   switch (layer) {
     case 'drawn':
@@ -993,8 +1071,9 @@ const performColorDelete = () => {
       layerText = '绘制层和背景层'
       break
   }
-  
-  alert(`颜色删除完成！\n在${layerText}中共删除了 ${deletedCount} 个元素`)
+
+  // 显示删除结果提示
+  alert(`颜色删除完成，共删除 ${deletedCount} 个元素（${layerText}）`)
 }
 
 // 设置当前工具
