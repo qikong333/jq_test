@@ -575,7 +575,7 @@ const handleExportImage = () => {
     emit('finish', exportData);
   } catch (error) {
     console.error('Failed to export image:', error);
-    alert('导出失败，请重试。');
+    console.error('导出失败，请重试。');
   }
 };
 

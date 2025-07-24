@@ -462,7 +462,7 @@ const handleExportImage = () => {
     emit('finish', exportData)
   } catch (error) {
     console.error('Failed to export image:', error)
-    alert('导出失败，请重试。')
+    console.error('导出失败，请重试。')
   }
 }
 
@@ -622,11 +622,11 @@ const handleRedo = async () => {
       })
     } else {
       console.error('图片上传失败:', result.error)
-      alert(`图片上传失败: ${result.error}`)
+      console.error(`图片上传失败: ${result.error}`)
     }
   } catch (error) {
     console.error('图片上传处理失败:', error)
-    alert('图片上传失败，请重试。')
+    console.error('图片上传失败，请重试。')
   }
 }
 

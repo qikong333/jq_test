@@ -5131,7 +5131,7 @@ const loadImageFromUrl = (url: string) => {
 
   img.onerror = () => {
     console.error('图片加载失败:', url);
-    alert('图片加载失败，请检查图片格式或网络连接');
+    console.error('图片加载失败，请检查图片格式或网络连接');
   };
 
   img.src = url;

@@ -1012,7 +1012,7 @@ const performColorReplace = () => {
   }
 
   // 显示替换结果提示
-  alert(`颜色替换完成，共替换 ${replacedCount} 个元素（${layerText}）`)
+  console.log(`颜色替换完成，共替换 ${replacedCount} 个元素（${layerText}）`)
 }
 
 // UI操作函数：执行颜色删除
@@ -1073,7 +1073,7 @@ const performColorDelete = () => {
   }
 
   // 显示删除结果提示
-  alert(`颜色删除完成，共删除 ${deletedCount} 个元素（${layerText}）`)
+  console.log(`颜色删除完成，共删除 ${deletedCount} 个元素（${layerText}）`)
 }
 
 // 设置当前工具

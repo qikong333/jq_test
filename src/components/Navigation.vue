@@ -51,6 +51,10 @@
           <span class="link-icon">🎨</span>
           <span>Canvas编辑器</span>
         </router-link>
+        <router-link to="/harmony" class="nav-link">
+          <span class="link-icon">📱</span>
+          <span>Harmony画布</span>
+        </router-link>
       </div>
     </div>
   </nav>

@@ -183,7 +183,7 @@ const toggleReadonly = () => {
  */
 const onFinish = (data: any) => {
   console.log('Canvas finished:', data);
-  alert(
+  console.log(
     `导出完成！使用了 ${data.metadata.colors.length} 种颜色，绘制了 ${data.metadata.paintedCells} 个格子。`,
   );
 };

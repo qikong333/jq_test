@@ -79,6 +79,11 @@ const router = createRouter({
       component: () => import('../views/canvasEditor/index.vue'),
     },
     {
+      path: '/harmony',
+      name: 'harmony',
+      component: () => import('../views/harmony.vue'),
+    },
+    {
       path: '/about',
       name: 'about',
       // route level code-splitting
